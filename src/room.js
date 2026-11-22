@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createWalk } from './walk.js';
-import { buildNeighborhood, neighborhoodLimits, neighborhoodZone } from './neighborhood.js';
+import { buildNeighborhood, neighborhoodZone } from './neighborhood.js';
+import { buildCity } from './city.js';
+import { cityLimits } from './city-layout.js';
 
 const colors = {
   cream: 0xe5d4b6, wall: 0xc8ae8d, trim: 0x907756, wood: 0xb1845d,
@@ -62,8 +64,8 @@ export function createRoom(canvas, onAnchors) {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color();
-  scene.fog = new THREE.Fog(0x000000, 13, 38);
-  const camera = new THREE.PerspectiveCamera(58, 1, 0.06, 56);
+  scene.fog = new THREE.Fog(0x000000, 90, 810);
+  const camera = new THREE.PerspectiveCamera(58, 1, 0.08, 1_000);
   camera.rotation.order = 'YXZ';
   const paper = makePaper();
   const materials = new Map();
@@ -146,6 +148,7 @@ export function createRoom(canvas, onAnchors) {
     curtains.push(curtain);
   }
 
+  const city = buildCity(scene, paper);
   const { obstacles, lantern, streetLight, ripples } =
     buildNeighborhood({ scene, box, cylinder, oval, object, colors: C });
 
@@ -297,6 +300,7 @@ export function createRoom(canvas, onAnchors) {
     lamp.intensity = intensity('lamp');
     fill.intensity = intensity('fill');
     shade.material.emissiveIntensity = lamp.intensity / 75;
+    city.light(minute);
   }
 
   const projection = new THREE.Vector3();
@@ -324,7 +328,8 @@ export function createRoom(canvas, onAnchors) {
     [-4.545, -1.795, -4.605, -3.715], // Work cabinet
     [-4.43, -2.83, 1.80, 4.10], // Bed
     ...obstacles,
-  ], neighborhoodLimits);
+    ...city.obstacles,
+  ], cityLimits);
 
   function goalAt(point) {
     const dx = point[0] - camera.position.x;
@@ -334,7 +339,7 @@ export function createRoom(canvas, onAnchors) {
     lookPitch = Math.atan2(dy, Math.hypot(dx, dz));
   }
 
-  function spawn(moment, active = true) {
+  function spawn(moment, active = true, savedPosition) {
     playing = active;
     target = null;
     keys.clear();
@@ -352,6 +357,13 @@ export function createRoom(canvas, onAnchors) {
     } else {
       camera.position.set(moment === 'breakfast' ? -1.28 : -0.72, 1.31, 0.86);
       goalAt([-1.66, 1.07, -0.75]);
+    }
+    if (active && savedPosition && walk.canStand(savedPosition.x, savedPosition.z)
+      && Number.isFinite(savedPosition.yaw) && Number.isFinite(savedPosition.pitch)) {
+      const y = Number.isFinite(savedPosition.y) ? THREE.MathUtils.clamp(savedPosition.y, 1.31, 1.65) : 1.65;
+      camera.position.set(savedPosition.x, y, savedPosition.z);
+      lookYaw = Math.atan2(Math.sin(savedPosition.yaw), Math.cos(savedPosition.yaw));
+      lookPitch = THREE.MathUtils.clamp(savedPosition.pitch, -0.75, 0.62);
     }
     eyeHeight = camera.position.y;
     yaw = lookYaw;
@@ -387,7 +399,7 @@ export function createRoom(canvas, onAnchors) {
       }
       walk.step(camera.position, yaw, elapsed, forward, right);
     }
-    if (target) goalAt(target === 'door' ? doorway : landmarks[target]);
+    if (target) goalAt(target);
     camera.position.y = reducedMotion.matches ? eyeHeight : THREE.MathUtils.damp(camera.position.y, eyeHeight, 7, elapsed);
     yaw = reducedMotion.matches ? lookYaw : THREE.MathUtils.damp(yaw, lookYaw, 14, elapsed);
     pitch = reducedMotion.matches ? lookPitch : THREE.MathUtils.damp(pitch, lookPitch, 14, elapsed);
@@ -398,6 +410,7 @@ export function createRoom(canvas, onAnchors) {
         ripple.scale.setScalar(1 + Math.sin(now / 730 - i * 1.2) * 0.065);
       });
     }
+    city.update(camera.position);
     renderer.render(scene, camera);
     if (playing) {
       const zone = neighborhoodZone(camera.position);
@@ -437,9 +450,13 @@ export function createRoom(canvas, onAnchors) {
   return {
     spawn,
     setTime,
-    focus(id) {
-      target = id === 'door' || Object.hasOwn(landmarks, id) ? id : null;
+    position() {
+      return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw, pitch };
     },
+    focus(id) {
+      target = id === 'door' ? doorway : landmarks[id] ?? null;
+    },
+    lookToward({ x, z }) { target = [x, 1.6, z]; },
     key(key, active) { if (active) keys.add(key); else keys.delete(key); },
     stop() {
       keys.clear();

@@ -6,6 +6,8 @@ import {
 } from './economy.js';
 import { createSoundscape } from './sound.js';
 import { advanceClock, createClock, readClock, startSleep } from './clock.js';
+import { drawCityMap } from './city-map.js';
+import { destinations } from './city-layout.js';
 
 const storageKey = 'commons.life.v1';
 const app = document.querySelector('#app');
@@ -37,6 +39,7 @@ let selectedPrice = 14;
 let focusedAction = null;
 let zone = 'home';
 let panel = null;
+let wholeCity = false;
 let soundOn = false;
 let room;
 
@@ -53,6 +56,7 @@ app.innerHTML = `
           <div class="tools">
             <button type="button" class="tool" id="route" hidden></button>
             <button type="button" class="tool" id="bed" hidden></button>
+            <button type="button" class="tool" id="map" hidden></button>
             <button type="button" class="tool" id="sound"></button>
             <button type="button" class="tool" id="help"></button>
           </div>
@@ -163,8 +167,8 @@ function begin(locale) {
   clock = createClock(life.moment);
   clockTick = performance.now();
   setLocale(locale);
-  persist();
   enter();
+  persist();
   get('dock').querySelector('button').focus({ preventScroll: true });
 }
 
@@ -182,11 +186,12 @@ function enter() {
   welcome.hidden = true;
   get('play').hidden = false;
   app.classList.add('in-life');
-  room?.spawn(life.moment);
+  room?.spawn(life.moment, true, life.position);
   room?.setTime(readClock(clock).minute);
   updateThought();
   get('hint').textContent = language.hint;
   get('help').textContent = language.help;
+  get('map').textContent = language.map;
   get('bed').textContent = language.sleep;
   get('render-error').textContent = language.webgl;
   get('close').setAttribute('aria-label', language.close);
@@ -264,7 +269,7 @@ function persist() {
   if (!life || !clock) return;
   lastSave = performance.now();
   try {
-    localStorage.setItem(storageKey, JSON.stringify({ ...life, clock }));
+    localStorage.setItem(storageKey, JSON.stringify({ ...life, clock, position: room?.position() ?? life.position }));
   } catch {
     // The current session remains playable when storage is unavailable.
   }
@@ -347,14 +352,31 @@ function works() {
     </div>`;
 }
 
+function cityMapPanel() {
+  return `<canvas id="city-plan" class="city-plan" width="480" height="480" role="img" aria-label="${language.mapLabel}"></canvas>
+    <div class="map-legend">
+      <span class="map-player">${language.mapPlayer}</span>
+      <span class="map-homes">${language.zones.residential}</span>
+      <span class="map-downtown">${language.zones.downtown}</span>
+      <span class="map-market">${language.zones.market}</span>
+      <span class="map-parks">${language.mapParks}</span>
+    </div>
+    <div class="button-row map-actions">
+      ${button('map-scale', wholeCity ? language.mapNearby : language.mapOverview, false, true)}
+    </div>
+    <fieldset class="map-destinations"><legend>${language.mapOrient}</legend><div class="button-row">
+      ${Object.keys(destinations).map((id) => `<button type="button" class="secondary" data-destination="${id}">${language.zones[id]}</button>`).join('')}
+    </div></fieldset>`;
+}
+
 function showPanel(id, focusView = true) {
   if (!life || (clock.rest && id !== 'sleeping') || (id === 'sleep' && !canSleep())) return;
   panel = id;
   room?.stop();
   if (focusView && zone === 'home' && roomActions.includes(id)) room?.focus(id);
   sheet.classList.toggle('sleeping', id === 'sleeping');
-  get('sheet-title').textContent = language.actions[id] ?? language[id];
-  get('sheet-subtitle').textContent = id === 'sleep' || id === 'sleeping' ? language.night
+  get('sheet-title').textContent = id === 'map' ? language.mapTitle : language.actions[id] ?? language[id];
+  get('sheet-subtitle').textContent = id === 'map' ? '' : id === 'sleep' || id === 'sleeping' ? language.night
     : language.subtitles[id] ?? (language.month + ' ' + (life.lastReceipt?.month ?? life.month));
 
   const step = 50 * regions[life.locale].scale;
@@ -373,6 +395,7 @@ function showPanel(id, focusView = true) {
       [language.debt, money(life.debt)], [language.interest, money(monthlyStatement(life).interest), true],
     ])}${button('payDebt', language.pay + ' · ' + amount(Math.min(life.cash, life.debt)), !life.debt || !life.cash)}`,
     work: works,
+    map: cityMapPanel,
     diary: () => {
       const mood = receipt ? currentThought() : language.journal;
       return `<blockquote>“${language.trying(life.yearsTrying)}”</blockquote><p>${mood}</p>`;
@@ -383,6 +406,7 @@ function showPanel(id, focusView = true) {
     sleeping: () => `<p id="sleep-remaining" role="status">${language.seconds(Math.ceil(clock.rest / 1_000))}</p>`,
   };
   content.innerHTML = panels[id]();
+  if (id === 'map') drawCityMap(get('city-plan'), room.position(), language, wholeCity);
   content.scrollTop = 0;
   if (!sheet.open) sheet.showModal();
 }
@@ -397,6 +421,11 @@ function gameAction(action) {
       break;
     case 'receipt':
       showPanel('receipt', false);
+      return;
+    case 'map-scale':
+      wholeCity = !wholeCity;
+      showPanel('map', false);
+      content.querySelector('[data-action="map-scale"]').focus();
       return;
     case 'sleep':
       tickClock();
@@ -433,6 +462,7 @@ get('play').addEventListener('click', (event) => {
 get('help').addEventListener('click', () => showPanel('help'));
 get('route').addEventListener('click', () => room?.focus('door'));
 get('bed').addEventListener('click', () => showPanel('sleep'));
+get('map').addEventListener('click', () => showPanel('map'));
 get('sound').addEventListener('click', async () => {
   get('sound').disabled = true;
   soundOn = await sound.toggle();
@@ -446,6 +476,13 @@ sheet.addEventListener('close', () => {
   sheet.classList.remove('sleeping');
 });
 content.addEventListener('click', (event) => {
+  const destination = event.target.closest('[data-destination]');
+  if (destination && panel === 'map') {
+    sheet.close();
+    if (zone === 'home') room.focus('door');
+    else room.lookToward(destinations[destination.dataset.destination]);
+    return;
+  }
   const button = event.target.closest('[data-action]');
   if (button && !button.disabled) gameAction(button.dataset.action);
 });
@@ -461,6 +498,8 @@ window.addEventListener('keydown', (event) => {
   const key = event.key.toLowerCase();
   if (key === 'e' && focusedAction && !event.repeat) {
     showPanel(focusedAction);
+  } else if (key === 'm' && room && !event.repeat) {
+    showPanel('map');
   } else if (controlledKeys.includes(key)) {
     event.preventDefault();
     room?.key(key, true);
@@ -504,8 +543,9 @@ window.setInterval(tickClock, 100);
 import('./room.js').then(({ createRoom }) => {
   room = createRoom(scene, paintMarkers);
   get('route').hidden = false;
+  get('map').hidden = false;
   if (life) {
-    room.spawn(life.moment);
+    room.spawn(life.moment, true, life.position);
     room.setTime(readClock(clock).minute);
     renderClock();
     room.funded(projectFunding(life) >= projectGoal(life));

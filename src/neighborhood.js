@@ -1,28 +1,27 @@
 import * as THREE from 'three';
-
-export const neighborhoodLimits = [-12, 28, -23, 10];
+import { cityBlockAt } from './city-layout.js';
 
 export function neighborhoodZone({ x, z }) {
   if (Math.abs(x) < 5.31 && z > -4.82 && z < 5.04) return 'home';
   if (x > 12.8 && x < 24 && z > -11.6 && z < 1.75) return 'park';
-  return 'street';
+  return cityBlockAt(x, z)?.zone ?? 'residential';
 }
 
 export function buildNeighborhood({ scene, box, cylinder, oval, object, colors: C }) {
   const obstacles = [];
-  const grass = 0x909271;
   const path = 0xc2af93;
   const gravel = 0xcdb794;
-  box(65, 0.23, 53, 7, -0.213, -10, grass, 0);
-  oval(36, -1.45, -14, 12.2, 4.2, 11.8, 0xa0a185);
-  oval(37.5, -1.70, 1.9, 11.3, 3.85, 10.7, 0x9b9f7e);
-  oval(22, -2.10, -30.0, 16.4, 4.6, 10.2, 0x999e7e);
   box(4.0, 0.028, 1.54, 7.14, -0.076, 1.45, path, 0);
-  box(1.6, 0.028, 25, 9.0, -0.077, -6.1, path, 0);
-  box(3.3, 0.025, 31, 11.45, -0.079, -6.2, 0x93918a, 0);
+  box(1.6, 0.028, 76, 9.0, -0.077, 12, path, 0);
+  box(3.3, 0.025, 76, 11.45, -0.079, 12, 0x93918a, 0);
   box(20.5, 0.028, 1.65, -0.39, -0.078, -7.4, path, 0);
   box(9.1, 0.029, 1.8, 13.5, -0.073, -5.8, path, 0);
   box(11, 0.025, 1.6, 19, -0.078, -12.6, path, 0);
+  box(14.2, 0.026, 1.56, 27.2, -0.073, -3.8, path, 0);
+  box(7.6, 0.025, 1.56, 49.5, -0.027, -3.8, gravel, 0);
+  for (let i = 0; i < 11; i++) {
+    box(0.56, 0.019, 1.02, 34.69 + i * 1.01, -0.069, -3.8, 0xe5d6b6, 0);
+  }
   for (let i = 0; i < 8; i++) {
     box(0.27, 0.014, 0.95, 10 + i * 0.39, -0.053, -5.8, 0xddd0b9, 0);
   }
@@ -105,12 +104,12 @@ export function buildNeighborhood({ scene, box, cylinder, oval, object, colors: 
     [5.69, -9.75, 1.25, 0x85814f], [6.92, 4.3, 0.8, 0x6f845d],
     [14.6, -9.9, 1.16, 0x6f865f], [21.9, -8.5, 1.29, 0x8b8a56],
     [14.8, -1.16, 0.88, 0x8e8d5d], [21.65, -1.9, 1.07, 0x707f5d],
-    [25.3, -10.5, 1.15, 0x788762], [24.85, -3.4, 1.13, 0x7e875d],
+    [25.3, -10.5, 1.15, 0x788762], [24.85, -2.55, 1.13, 0x7e875d],
     [-8.9, -17.7, 1.45, 0x8b9067], [19.23, -20.72, 1.55, 0x818a65],
   ]) tree(x, z, size, shade);
 
-  for (const [x, z, tone] of [[13.8, -8.65, 0x7f885e], [22.6, -9.55, 0x85865c], [22.5, -3.95, 0x798461],
-    [24.5, 0.4, 0x7b8861], [24.1, -8.9, 0x8b8b5b], [25.2, -3.3, 0x7d8867]]) {
+  for (const [x, z, tone] of [[13.8, -8.65, 0x7f885e], [22.6, -9.55, 0x85865c], [22.5, -4.95, 0x798461],
+    [24.5, 0.4, 0x7b8861], [24.1, -8.9, 0x8b8b5b], [25.2, -2.5, 0x7d8867]]) {
     oval(x, 0.23, z, 0.58, 0.44, 0.46, tone);
     oval(x + 0.38, 0.18, z - 0.16, 0.43, 0.36, 0.35, tone);
     footprint(x + 0.15, z, 0.85, 0.69);

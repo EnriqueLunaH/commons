@@ -325,6 +325,25 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .fund progress { display: block; width: 100%; accent-color: #687759; margin: 0.15rem 0 0.32rem; }
 .fund small, .notice { color: #574c39; line-height: 1.5; }
 .button-row { display: flex; gap: 0.55rem; flex-wrap: wrap; }
+.city-plan { display: block; width: min(100%, 360px); height: auto; margin-inline: auto; border: 1px solid #c6b396; border-radius: 0.38rem; touch-action: pan-y; }
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.82rem;
+  margin-block: 0.78rem;
+  color: #574c39;
+  font-size: 0.75rem;
+}
+.map-legend span { display: flex; gap: 0.32rem; align-items: center; }
+.map-legend span::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--district); }
+.map-player { --district: #364944; }
+.map-homes { --district: #c9ae95; }
+.map-downtown { --district: #9ba9a8; }
+.map-market { --district: #be8970; }
+.map-parks { --district: #8f9b71; }
+.map-actions { margin-block: 0.8rem; }
+.map-destinations { border: 0; margin: 0; padding: 0; }
+.map-destinations legend { margin-bottom: 0.45rem; padding: 0; color: #574c39; font-size: 0.82rem; }
 .primary, .secondary {
   display: inline-flex;
   justify-content: center;
