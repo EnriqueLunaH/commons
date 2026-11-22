@@ -1,0 +1,142 @@
+export const regions = {
+  'es-MX': { currency: 'MXN', scale: 16 },
+  'en-US': { currency: 'USD', scale: 1 },
+};
+
+const households = [
+  { cash: 105, savings: 25, debt: 390, income: 910, housing: 485, food: 225, utilities: 105 },
+  { cash: 360, savings: 190, debt: 280, income: 1480, housing: 730, food: 265, utilities: 145 },
+  { cash: 740, savings: 620, debt: 120, income: 2200, housing: 980, food: 320, utilities: 185 },
+];
+
+export const moments = ['breakfast', 'dinner', 'dawn'];
+export const lotSizes = [3, 6];
+export const basePrices = [10, 14, 18];
+export const interestRate = 2;
+
+export function createLife(locale, random = Math.random) {
+  const draw = (length) => Math.floor(random() * length);
+  const age = 20 + draw(51);
+  const gender = ['woman', 'man'][draw(2)];
+  const household = draw(households.length);
+  const moment = moments[draw(moments.length)];
+  const yearsTrying = 1 + draw(age - 19);
+  const { scale } = regions[locale];
+  const resources = Object.fromEntries(
+    Object.entries(households[household]).map(([key, amount]) => [key, amount * scale]),
+  );
+  const career = age < 30 ? 'shift' : age < 60 ? 'contract' : 'mentoring';
+
+  return {
+    version: 1, locale, age, gender, household, moment, yearsTrying, career,
+    ...resources,
+    month: 1,
+    contributed: 0,
+    activity: null,
+    lastReceipt: null,
+  };
+}
+
+export function shiftPay(life) {
+  const { scale } = regions[life.locale];
+  return { shift: 120, contract: 175, mentoring: 150 }[life.career] * scale;
+}
+
+export function marketOffer(life, units, basePrice) {
+  const { scale } = regions[life.locale];
+  const demand = { 10: 6, 14: 4, 18: 2 }[basePrice];
+  const sold = Math.min(units, demand);
+  const cost = units * 8 * scale;
+  const revenue = sold * basePrice * scale;
+  return { kind: 'sale', units, sold, cost, revenue, price: basePrice * scale };
+}
+
+export function scheduleSale(life, units, basePrice) {
+  if (life.activity || !lotSizes.includes(units) || !basePrices.includes(basePrice)) return life;
+  const offer = marketOffer(life, units, basePrice);
+  if (offer.cost > life.cash) return life;
+  return { ...life, activity: offer, cash: life.cash - offer.cost };
+}
+
+export function scheduleWork(life) {
+  if (life.activity) return life;
+  return { ...life, activity: { kind: 'work', pay: shiftPay(life) } };
+}
+
+export function transfer(life, action) {
+  const step = 50 * regions[life.locale].scale;
+  if (action === 'deposit') {
+    const amount = Math.min(life.cash, step);
+    return { ...life, cash: life.cash - amount, savings: life.savings + amount };
+  }
+  if (action === 'withdraw') {
+    const amount = Math.min(life.savings, step);
+    return { ...life, cash: life.cash + amount, savings: life.savings - amount };
+  }
+  if (action === 'payDebt') {
+    const amount = Math.min(life.cash, life.debt, step);
+    return { ...life, cash: life.cash - amount, debt: life.debt - amount };
+  }
+  return life;
+}
+
+export function projectGoal(life) {
+  return 355 * regions[life.locale].scale;
+}
+
+export function projectFunding(life) {
+  return 95 * regions[life.locale].scale + life.contributed;
+}
+
+export function monthlyStatement(life) {
+  const workPay = life.activity?.kind === 'work' ? life.activity.pay : 0;
+  const sale = life.activity?.kind === 'sale' ? life.activity : null;
+  const sales = sale?.revenue ?? 0;
+  const cost = sale?.cost ?? 0;
+  const taxable = life.income + workPay + Math.max(0, sales - cost);
+  const tax = Math.floor(taxable / 10);
+  const interest = Math.round(life.debt * interestRate / 100);
+  const incident = life.month % 3 === 2 ? 145 * regions[life.locale].scale : 0;
+  const bills = life.housing + life.food + life.utilities + incident;
+  const afterBills = life.cash + life.income + workPay + sales - bills - tax;
+
+  return {
+    month: life.month, income: life.income, workPay, sales, cost, sold: sale?.sold ?? 0, prepared: sale?.units ?? 0,
+    housing: life.housing, food: life.food, utilities: life.utilities, incident, tax, interest,
+    shortfall: Math.max(0, -afterBills), balance: Math.max(0, afterBills),
+    margin: life.income + workPay + sales - cost - bills - tax - interest,
+  };
+}
+
+export function closeMonth(life) {
+  const receipt = monthlyStatement(life);
+  return {
+    ...life,
+    cash: receipt.balance,
+    debt: life.debt + receipt.interest + receipt.shortfall,
+    contributed: life.contributed + receipt.tax,
+    month: life.month + 1,
+    moment: moments[(moments.indexOf(life.moment) + 1) % moments.length],
+    activity: null,
+    lastReceipt: receipt,
+  };
+}
+
+export function restoreLife(raw) {
+  try {
+    const life = JSON.parse(raw);
+    if (life?.version === 1 && Object.hasOwn(regions, life.locale)
+      && moments.includes(life.moment)
+      && Number.isInteger(life.age) && life.age >= 20 && life.age <= 70
+      && Number.isInteger(life.yearsTrying) && life.yearsTrying > 0 && life.yearsTrying <= life.age - 19
+      && ['woman', 'man'].includes(life.gender)
+      && [0, 1, 2].includes(life.household)
+      && ['shift', 'contract', 'mentoring'].includes(life.career)
+      && Number.isInteger(life.month) && life.month > 0
+      && ['cash', 'savings', 'debt', 'income', 'housing', 'food', 'utilities', 'contributed']
+        .every((key) => Number.isSafeInteger(life[key]) && life[key] >= 0)) return life;
+  } catch {
+    // A browser can restore a previously interrupted or invalid save.
+  }
+  return null;
+}
