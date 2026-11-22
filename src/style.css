@@ -214,8 +214,8 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
   justify-items: center;
   padding: 0 0.75rem clamp(0.65rem, 1.65vw, 1.3rem);
 }
-.arrival { max-width: 560px; }
-.arrival p {
+.arrival {
+  max-width: 560px;
   color: #fff0d5;
   margin: 0 0 1rem;
   text-align: center;
@@ -373,7 +373,7 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
   .pockets div + div { padding-left: 0.42rem; }
   .pockets strong { font-size: 0.84rem; }
   .tool { padding-inline: 0.35rem; }
-  .arrival p { font-size: 0.94rem; }
+  .arrival { font-size: 0.94rem; }
   .sheet-header, .sheet-body { padding-inline: 1.05rem; }
 }
 

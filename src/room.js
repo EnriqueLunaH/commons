@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { createWalk } from './walk.js';
+import { buildNeighborhood, neighborhoodLimits, neighborhoodZone } from './neighborhood.js';
 
 const colors = {
   cream: 0xe5d4b6, wall: 0xc8ae8d, trim: 0x907756, wood: 0xb1845d,
@@ -21,6 +23,7 @@ const landmarks = {
   work: [-3.05, 2.18, -4.44],
   diary: [-0.7, 1.13, -0.60],
 };
+const doorway = [5.31, 1.59, 1.45];
 
 function makePaper() {
   const sheet = document.createElement('canvas');
@@ -44,6 +47,7 @@ export function createRoom(canvas, onAnchors) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.65));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.autoUpdate = false;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
 
@@ -94,7 +98,13 @@ export function createRoom(canvas, onAnchors) {
     }
   }
   box(0.23, 3.7, 10.2, -5.31, 1.8, 0.04, C.cream, 0);
-  box(0.23, 3.7, 10.2, 5.31, 1.8, 0.04, C.cream, 0);
+  box(0.23, 3.7, 5.80, 5.31, 1.8, -2.16, C.cream, 0);
+  box(0.23, 3.7, 2.98, 5.31, 1.8, 3.65, C.cream, 0);
+  box(0.23, 1.23, 1.42, 5.31, 3.045, 1.45, C.cream, 0);
+  for (const z of [0.72, 2.18]) box(0.35, 2.45, 0.085, 5.31, 1.20, z, C.trim);
+  box(0.35, 0.10, 1.54, 5.31, 2.43, 1.45, C.trim);
+  box(0.48, 0.055, 1.46, 5.31, -0.018, 1.45, C.wood, 0.016);
+  box(0.09, 2.25, 1.29, 5.54, 1.136, 0.13, C.green).rotation.y = 0.14;
   box(10.8, 3.7, 0.23, 0, 1.8, 5.04, C.wall, 0);
   box(10.8, 0.19, 10.2, 0, 3.64, 0.04, C.cream, 0);
   box(5.31, 3.7, 0.24, -2.67, 1.78, -4.82, C.cream, 0);
@@ -103,7 +113,9 @@ export function createRoom(canvas, onAnchors) {
   box(3.92, 0.87, 0.24, 1.95, 3.28, -4.82, C.cream, 0);
   box(10.6, 0.16, 0.10, 0, 0.08, -4.65, C.trim);
   box(10.6, 0.16, 0.10, 0, 0.08, 4.9, C.trim);
-  for (const x of [-5.16, 5.16]) box(0.10, 0.16, 9.7, x, 0.08, 0.1, C.trim);
+  box(0.10, 0.16, 9.7, -5.16, 0.08, 0.1, C.trim);
+  box(0.10, 0.16, 5.45, 5.16, 0.08, -2.06, C.trim);
+  box(0.10, 0.16, 2.66, 5.16, 0.08, 3.52, C.trim);
   for (const z of [-3.45, -0.25, 3.0]) box(10.6, 0.14, 0.20, 0, 3.47, z, C.trim);
 
   for (const x of [0.0, 1.95, 3.90]) box(0.093, 2.13, 0.16, x, 1.824, -4.65, C.white);
@@ -123,30 +135,8 @@ export function createRoom(canvas, onAnchors) {
     curtains.push(curtain);
   }
 
-  box(50, 0.28, 36, 0, -0.30, -20, 0x808268, 0);
-  box(18, 0.018, 1.5, 0, -0.143, -7.4, 0xb5a186, 0.08);
-  for (const [x, z, size, color] of [
-    [-3.5, -8, 1.0, 0x63734f], [0, -10, 1.15, 0x657956], [4.3, -9.6, 1.35, 0x777b4b],
-    [7.5, -12, 1.1, 0x677758], [-4, -17, 1.6, 0x89956e], [7, -19, 1.6, 0x788367],
-  ]) {
-    cylinder(0.08 * size, 0.15 * size, 2 * size, x, 0.85 * size, z, C.darkWood);
-    oval(x, 2.25 * size, z, 0.86 * size, 1.26 * size, 0.75 * size, color);
-    oval(x + 0.55, 1.95 * size, z - 0.23, 0.65 * size, 0.87 * size, 0.63 * size, color);
-  }
-  for (const [x, z, wallColor] of [[0.8, -14.6, 0xd4b58f], [6.4, -15.2, 0xd3b194], [-4.1, -13.9, 0xc4ad83]]) {
-    box(2.65, 2.1, 2.15, x, 0.96, z, wallColor, 0.06);
-    const roof = object(new THREE.CylinderGeometry(0, 1.83, 0.88, 4), C.clay, x, 2.43, z);
-    roof.rotation.y = Math.PI / 4;
-    box(0.49, 0.65, 0.09, x + 0.48, 1.2, z + 1.09, C.blue);
-    box(0.48, 0.94, 0.08, x - 0.45, 0.32, z + 1.09, C.darkWood);
-  }
-  cylinder(0.047, 0.076, 2.55, 2.98, 1.15, -7.85, C.charcoal);
-  box(0.36, 0.39, 0.34, 2.98, 2.43, -7.85, C.charcoal);
-  const lantern = box(0.27, 0.21, 0.35, 2.98, 2.41, -7.85, C.brass);
-  lantern.material = lantern.material.clone();
-  const streetLight = new THREE.PointLight(0xffc36b, 0, 7, 2);
-  streetLight.position.set(2.98, 2.35, -7.85);
-  scene.add(streetLight);
+  const { obstacles, lantern, streetLight, ripples } =
+    buildNeighborhood({ scene, box, cylinder, oval, object, colors: C });
 
   const rug = box(3.53, 0.033, 2.78, -1.34, 0.028, 0.02, 0xa97558, 0.045);
   rug.castShadow = false;
@@ -285,6 +275,7 @@ export function createRoom(canvas, onAnchors) {
     meal.visible = moment !== 'dawn';
     bread.visible = moment === 'breakfast';
     stew.visible = moment === 'dinner';
+    renderer.shadowMap.needsUpdate = true;
   }
 
   const projection = new THREE.Vector3();
@@ -301,11 +292,17 @@ export function createRoom(canvas, onAnchors) {
   let eyeHeight = 1.65;
   let dimensions = { width: 1, height: 1 };
   let previous = performance.now();
-  const bounds = [
-    [-2.95, 0.14, -1.48, 0.44], [-2.13, -1.35, 0.48, 1.28],
-    [-2.19, -1.47, -2.18, -1.42], [1.55, 4.22, -3.90, -2.83],
-    [4.28, 5.1, -2.53, -0.95], [-4.69, -1.68, -4.7, -3.54],
-  ];
+  const walk = createWalk([
+    [-5.43, -5.19, -5.06, 5.15], [-5.42, 5.42, 4.92, 5.16],
+    [-5.42, 5.42, -4.94, -4.70],
+    [5.19, 5.43, -5.06, 0.74], [5.19, 5.43, 2.16, 5.15],
+    [-2.725, -0.075, -1.225, 0.325], // Dining table
+    [-2.05, -1.45, 0.60, 1.18], [-2.13, -1.53, -2.08, -1.50], // Chairs
+    [1.695, 4.085, -3.765, -3.015], // Sideboard
+    [4.375, 5.045, -2.475, -1.005], // Savings cabinet
+    [-4.545, -1.795, -4.605, -3.715], // Work cabinet
+    ...obstacles,
+  ], neighborhoodLimits);
 
   function goalAt(point) {
     const dx = point[0] - camera.position.x;
@@ -318,6 +315,8 @@ export function createRoom(canvas, onAnchors) {
   function spawn(moment, active = true) {
     playing = active;
     target = null;
+    keys.clear();
+    walk.stop();
     setMoment(moment);
     if (!active) {
       camera.position.set(-0.86, 1.65, 3.42);
@@ -332,11 +331,6 @@ export function createRoom(canvas, onAnchors) {
     eyeHeight = camera.position.y;
     yaw = lookYaw;
     pitch = lookPitch;
-  }
-
-  function traversable(x, z) {
-    return Math.abs(x) < 4.95 && z > -4.46 && z < 4.65
-      && !bounds.some(([left, right, back, front]) => x > left && x < right && z > back && z < front);
   }
 
   function resize() {
@@ -364,34 +358,34 @@ export function createRoom(canvas, onAnchors) {
       }
       if (forward || right) {
         eyeHeight = 1.65;
-        const stride = elapsed * 2.1 / Math.hypot(forward, right);
-        const dx = (-Math.sin(yaw) * forward + Math.cos(yaw) * right) * stride;
-        const dz = (-Math.cos(yaw) * forward - Math.sin(yaw) * right) * stride;
-        if (traversable(camera.position.x + dx, camera.position.z)) camera.position.x += dx;
-        if (traversable(camera.position.x, camera.position.z + dz)) camera.position.z += dz;
         target = null;
       }
+      walk.step(camera.position, yaw, elapsed, forward, right);
     }
-    if (target) goalAt(landmarks[target]);
+    if (target) goalAt(target === 'door' ? doorway : landmarks[target]);
     camera.position.y = reducedMotion.matches ? eyeHeight : THREE.MathUtils.damp(camera.position.y, eyeHeight, 7, elapsed);
     yaw = reducedMotion.matches ? lookYaw : THREE.MathUtils.damp(yaw, lookYaw, 14, elapsed);
     pitch = reducedMotion.matches ? lookPitch : THREE.MathUtils.damp(pitch, lookPitch, 14, elapsed);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
     if (!reducedMotion.matches) {
       curtains.forEach((curtain, i) => { curtain.rotation.x = Math.sin(now / 1800 + i) * 0.014; });
+      ripples.forEach((ripple, i) => {
+        ripple.scale.setScalar(1 + Math.sin(now / 730 - i * 1.2) * 0.065);
+      });
     }
     renderer.render(scene, camera);
     if (playing) {
+      const zone = neighborhoodZone(camera.position);
       const locations = Object.fromEntries(Object.entries(landmarks).map(([id, point]) => {
         projection.set(...point).project(camera);
         const x = (projection.x + 1) * dimensions.width / 2;
         const y = (1 - projection.y) * dimensions.height / 2;
-        const visible = projection.z < 1 && projection.z > -1
+        const visible = zone === 'home' && projection.z < 1 && projection.z > -1
           && x > 35 && x < dimensions.width - 35
           && y > (dimensions.width <= 680 ? 148 : 114) && y < dimensions.height - 128;
         return [id, { x, y, visible }];
       }));
-      onAnchors(locations, dimensions);
+      onAnchors(locations, dimensions, zone);
     }
   }
 
@@ -417,9 +411,14 @@ export function createRoom(canvas, onAnchors) {
   return {
     spawn,
     setMoment,
-    focus(id) { target = Object.hasOwn(landmarks, id) ? id : null; },
+    focus(id) {
+      target = id === 'door' || Object.hasOwn(landmarks, id) ? id : null;
+    },
     key(key, active) { if (active) keys.add(key); else keys.delete(key); },
-    stop() { keys.clear(); },
+    stop() {
+      keys.clear();
+      walk.stop();
+    },
     funded(active) {
       lantern.material.emissive.set(active ? 0xffb351 : 0x000000);
       lantern.material.emissiveIntensity = active ? 1.75 : 0;

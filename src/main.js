@@ -29,6 +29,7 @@ let currency;
 let selectedLot = 3;
 let selectedPrice = 14;
 let focusedAction = null;
+let zone = 'home';
 let panel = null;
 let soundOn = false;
 let room;
@@ -44,6 +45,7 @@ app.innerHTML = `
         <div class="hud-right">
           <div class="pockets" id="pockets"></div>
           <div class="tools">
+            <button type="button" class="tool" id="route" hidden></button>
             <button type="button" class="tool" id="sound"></button>
             <button type="button" class="tool" id="help"></button>
           </div>
@@ -87,7 +89,12 @@ const markerElements = Object.fromEntries(actions.map((action) => {
   return [action, element];
 }));
 
-function paintMarkers(locations, { width, height }) {
+function paintMarkers(locations, { width, height }, currentZone) {
+  if (zone !== currentZone) {
+    zone = currentZone;
+    updateHud();
+    updateThought();
+  }
   focusedAction = null;
   let nearest = Math.min(width, height) * 0.18;
   for (const [action, location] of Object.entries(locations)) {
@@ -157,12 +164,16 @@ function currentThought() {
   return language.thought[receipt.margin < 0 ? 'loss' : receipt.margin > 0 ? 'gain' : 'even'];
 }
 
+function updateThought() {
+  get('arrival').textContent = '“' + (language.outsideThought[zone] ?? currentThought()) + '”';
+}
+
 function enter() {
   welcome.hidden = true;
   get('play').hidden = false;
   app.classList.add('in-life');
   room?.spawn(life.moment);
-  get('arrival').innerHTML = `<p>“${currentThought()}”</p>`;
+  updateThought();
   get('hint').textContent = language.hint;
   get('help').textContent = language.help;
   get('render-error').textContent = language.webgl;
@@ -190,12 +201,13 @@ const money = (amount) => currency.format(amount);
 function updateHud() {
   get('identity').innerHTML = `
     <div class="wordmark"><span class="sigil" aria-hidden="true">✳</span> COMMONS</div>
-    <p class="location">${language.home} · ${language.month} ${life.month}
+    <p class="location">${language.zones[zone]} · ${language.month} ${life.month}
       <span class="when">${language.times[life.moment]} · ${language.scene[life.moment]}</span>
     </p>
     <p class="profile">${life.age} ${language.age} · ${language.gender[life.gender]} · ${language.household[life.household]}</p>`;
   get('pockets').innerHTML = ['cash', 'savings', 'debt'].map((key) => `
     <div><span>${language[key]}</span><strong>${money(life[key])}</strong></div>`).join('');
+  get('route').textContent = zone === 'home' ? language.exit : language.returnHome;
   room?.funded(projectFunding(life) >= projectGoal(life));
 }
 
@@ -288,7 +300,7 @@ function showPanel(id, focusView = true) {
   if (!life) return;
   panel = id;
   room?.stop();
-  if (focusView && actions.includes(id)) room?.focus(id);
+  if (focusView && zone === 'home' && actions.includes(id)) room?.focus(id);
   get('sheet-title').textContent = language.actions[id] ?? language[id];
   get('sheet-subtitle').textContent = language.subtitles[id] ?? (language.month + ' ' + (life.lastReceipt?.month ?? life.month));
 
@@ -326,7 +338,7 @@ function gameAction(action) {
       if (panel !== 'budget') return;
       life = closeMonth(life);
       room?.setMoment(life.moment);
-      get('arrival').innerHTML = `<p>“${currentThought()}”</p>`;
+      updateThought();
       panel = 'receipt';
       break;
     case 'receipt':
@@ -356,6 +368,7 @@ get('play').addEventListener('click', (event) => {
   if (control) showPanel(control.dataset.panel);
 });
 get('help').addEventListener('click', () => showPanel('help'));
+get('route').addEventListener('click', () => room?.focus('door'));
 get('sound').addEventListener('click', async () => {
   get('sound').disabled = true;
   soundOn = await sound.toggle();
@@ -387,6 +400,9 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keyup', (event) => room?.key(event.key.toLowerCase(), false));
 window.addEventListener('blur', () => room?.stop());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) room?.stop();
+});
 get('move').addEventListener('pointerdown', (event) => {
   const button = event.target.closest('[data-key]');
   if (!button) return;
@@ -406,6 +422,7 @@ else renderWelcome();
 
 import('./room.js').then(({ createRoom }) => {
   room = createRoom(scene, paintMarkers);
+  get('route').hidden = false;
   if (life) {
     room.spawn(life.moment);
     room.funded(projectFunding(life) >= projectGoal(life));
