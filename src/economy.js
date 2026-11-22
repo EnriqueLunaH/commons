@@ -1,8 +1,8 @@
 import { createEmployment, occupations, restoreEmployment } from './employment.js';
 
 export const regions = {
-  'es-MX': { currency: 'MXN', scale: 16 },
-  'en-US': { currency: 'USD', scale: 1 },
+  'es-MX': { currency: 'MXN', scale: 16, fare: 12 },
+  'en-US': { currency: 'USD', scale: 1, fare: 2 },
 };
 
 const households = [
@@ -36,6 +36,7 @@ export function createLife(locale, random = Math.random) {
     employment: createEmployment(occupation, resources.income),
     month: 1,
     contributed: 0,
+    transitSpent: 0,
     activity: null,
     lastReceipt: null,
   };
@@ -97,6 +98,12 @@ export function projectFunding(life) {
   return 95 * regions[life.locale].scale + life.contributed;
 }
 
+export function payBusFare(life) {
+  const { fare } = regions[life.locale];
+  if (life.cash < fare) return life;
+  return { ...life, cash: life.cash - fare, transitSpent: life.transitSpent + fare };
+}
+
 export function monthlyStatement(life) {
   const income = life.employment.earned;
   const workPay = life.activity?.kind === 'work' ? life.activity.pay : 0;
@@ -107,14 +114,22 @@ export function monthlyStatement(life) {
   const tax = Math.floor(taxable / 10);
   const interest = Math.round(life.debt * interestRate / 100);
   const incident = life.month % 3 === 2 ? 145 * regions[life.locale].scale : 0;
-  const bills = life.housing + life.food + life.utilities + incident;
-  const afterBills = life.cash + income + workPay + sales - bills - tax;
+  const electricity = Math.floor(life.utilities * 0.38);
+  const water = Math.floor(life.utilities * 0.24);
+  const internet = life.utilities - electricity - water;
+  const essentials = life.housing + life.food + life.utilities;
+  const transitSpent = life.transitSpent;
+  const pendingIncome = income + workPay + sales;
+  const expenses = essentials + incident + tax + interest + cost + transitSpent;
+  // Supplies and fares already reduced cash, and interest accrues to debt.
+  const afterBills = life.cash + pendingIncome - essentials - incident - tax;
 
   return {
     month: life.month, income, workPay, sales, cost, sold: sale?.sold ?? 0, prepared: sale?.units ?? 0,
-    housing: life.housing, food: life.food, utilities: life.utilities, incident, tax, interest,
+    housing: life.housing, food: life.food, utilities: life.utilities, electricity, water, internet,
+    incident, tax, interest, transitSpent, essentials, expenses, pendingIncome,
     shortfall: Math.max(0, -afterBills), balance: Math.max(0, afterBills),
-    margin: income + workPay + sales - cost - bills - tax - interest,
+    margin: pendingIncome - expenses,
   };
 }
 
@@ -126,6 +141,7 @@ export function closeMonth(life) {
     debt: life.debt + receipt.interest + receipt.shortfall,
     contributed: life.contributed + receipt.tax,
     month: life.month + 1,
+    transitSpent: 0,
     activity: null,
     employment: { ...life.employment, earned: 0 },
     lastReceipt: receipt,
@@ -146,7 +162,11 @@ export function restoreLife(raw) {
       && ['cash', 'savings', 'debt', 'income', 'housing', 'food', 'utilities', 'contributed']
         .every((key) => Number.isSafeInteger(life[key]) && life[key] >= 0)) {
       const index = (life.age + life.household + Number(life.gender === 'woman')) % occupations.length;
-      return { ...life, employment: restoreEmployment(life.employment, occupations[index], life.income) };
+      return {
+        ...life,
+        transitSpent: Number.isSafeInteger(life.transitSpent) && life.transitSpent >= 0 ? life.transitSpent : 0,
+        employment: restoreEmployment(life.employment, occupations[index], life.income),
+      };
     }
   } catch {
     // A browser can restore a previously interrupted or invalid save.

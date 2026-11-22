@@ -2,7 +2,7 @@ import './style.css';
 import { copy } from './copy.js';
 import {
   regions, createLife, marketOffer, monthlyStatement, closeMonth, projectGoal, projectFunding,
-  basePrices, lotSizes, shiftPay, dailyWage, scheduleSale, scheduleWork, transfer, restoreLife,
+  basePrices, lotSizes, shiftPay, dailyWage, scheduleSale, scheduleWork, transfer, restoreLife, payBusFare,
 } from './economy.js';
 import { createSoundscape } from './sound.js';
 import { advanceClock, createClock, readClock, startSleep } from './clock.js';
@@ -20,6 +20,8 @@ const actions = Object.keys(actionIcons);
 const roomActions = [...actions, 'sleep'];
 const markedActions = [...roomActions, 'job', 'transport', ...residentIds];
 const controlledKeys = ['w', 'a', 's', 'd', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'];
+const essentials = ['housing', 'electricity', 'water', 'internet', 'food'];
+const otherExpenses = ['cost', 'incident', 'tax', 'interest'];
 const preferredLocale = navigator.language.toLowerCase().startsWith('es') ? 'es-MX' : 'en-US';
 
 function load() {
@@ -66,9 +68,27 @@ app.innerHTML = `
             <button type="button" class="tool" id="map" hidden></button>
             <button type="button" class="tool" id="sound"></button>
             <button type="button" class="tool" id="help"></button>
+            <button type="button" class="tool" id="budget-toggle" aria-expanded="false" aria-controls="budget-drawer"></button>
           </div>
         </div>
       </header>
+      <aside class="budget-drawer" id="budget-drawer" aria-labelledby="budget-title" hidden>
+        <header class="budget-header">
+          <div>
+            <p id="budget-month" class="eyebrow"></p>
+            <h2 id="budget-title"></h2>
+            <p id="budget-living"></p>
+          </div>
+          <button type="button" class="icon-close" id="budget-close">×</button>
+        </header>
+        <div class="budget-scroll">
+          <div id="budget-figures"></div>
+          <div class="button-row">
+            <button type="button" class="primary" id="budget-save" data-panel="savings"></button>
+            <button type="button" class="secondary" id="budget-notebook" data-panel="budget"></button>
+          </div>
+        </div>
+      </aside>
       <div class="markers" id="markers"></div>
       <div class="reticle" id="reticle" aria-hidden="true"></div>
       <div class="touch-move" id="move"></div>
@@ -96,6 +116,8 @@ const scene = get('view');
 const welcome = get('welcome');
 const sheet = get('sheet');
 const content = get('sheet-body');
+const budgetDrawer = get('budget-drawer');
+const budgetToggle = get('budget-toggle');
 const markerLayer = get('markers');
 const markerElements = Object.fromEntries(markedActions.map((action) => {
   const element = document.createElement('button');
@@ -209,6 +231,11 @@ function enter() {
   get('map').textContent = language.map;
   get('job').textContent = language.employment.title;
   get('transport').textContent = language.transit.title;
+  budgetToggle.textContent = get('budget-title').textContent = language.budget.title;
+  get('budget-living').textContent = language.budget.living;
+  get('budget-close').setAttribute('aria-label', language.close + ' · ' + language.budget.title);
+  get('budget-save').textContent = language.budget.save;
+  get('budget-notebook').textContent = language.budget.notebook;
   get('bed').textContent = language.sleep;
   get('render-error').textContent = language.webgl;
   get('close').setAttribute('aria-label', language.close);
@@ -315,6 +342,7 @@ function updateHud() {
       · <span id="job-status"></span></p>`;
   get('pockets').innerHTML = ['cash', 'savings', 'debt'].map((key) => `
     <div><span>${language[key]}</span><strong>${money(life[key])}</strong></div>`).join('');
+  if (!budgetDrawer.hidden) renderBudget();
   get('route').textContent = zone === 'home' ? language.exit : language.returnHome;
   get('route').hidden = !room || zone === 'bus';
   app.classList.toggle('in-transit', zone === 'bus');
@@ -344,14 +372,51 @@ function figures(entries) {
   return `<dl class="figures">${entries.map((entry) => row(...entry)).join('')}</dl>`;
 }
 
+function setBudgetOpen(open) {
+  budgetDrawer.hidden = !open;
+  budgetToggle.setAttribute('aria-expanded', String(open));
+  if (open) renderBudget();
+  else budgetToggle.focus();
+}
+
+function renderBudget() {
+  const budget = language.budget;
+  const receipt = monthlyStatement(life);
+  const fare = money(regions[life.locale].fare);
+  const expenseRows = ['transitSpent', ...essentials, ...otherExpenses.filter((key) => receipt[key])]
+    .map((key) => [language[key], money(receipt[key])]);
+  get('budget-month').textContent = language.month + ' ' + life.month;
+  get('budget-figures').innerHTML = `
+    <div class="budget-margin${receipt.margin < 0 ? ' budget-short' : ''}">
+      <span>${language.margin}</span><strong>${money(receipt.margin)}</strong>
+      <small>${budget.marginHint}</small>
+    </div>
+    ${figures([
+      [budget.salary, money(life.income)],
+      [language.income, money(receipt.income), true],
+      ...(receipt.pendingIncome > receipt.income ? [[budget.extra, money(receipt.pendingIncome - receipt.income)]] : []),
+    ])}
+    <p class="budget-note">${budget.payday}</p>
+    <h3>${budget.expenses}</h3>
+    ${figures([...expenseRows, [budget.total, money(receipt.expenses), true]])}
+    <p class="budget-note">${language.transit.title} · ${language.transit.fare(fare)}. ${budget.walk}</p>
+    <div class="fund budget-reserve">
+      <h3 id="reserve-goal">${budget.reserve}</h3>
+      <div><span>${money(life.savings)} / ${money(receipt.essentials)}</span></div>
+      <progress aria-labelledby="reserve-goal" value="${Math.min(life.savings, receipt.essentials)}" max="${Math.max(1, receipt.essentials)}"></progress>
+      <small>${budget.reserveGoal}</small>
+    </div>`;
+}
+
 function statement(receipt, settled = false) {
   const rows = [[language.income, money(receipt.income)]];
   if (settled && receipt.prepared) rows.push([language.sold, receipt.sold + ' / ' + receipt.prepared]);
-  for (const key of ['workPay', 'sales', 'cost', 'housing', 'food', 'utilities', 'incident', 'tax', 'interest', 'shortfall']) {
+  const householdBills = receipt.electricity === undefined ? ['housing', 'food', 'utilities'] : essentials;
+  const expenses = ['cost', ...householdBills, 'transitSpent', 'incident', 'tax', 'interest'];
+  for (const key of ['workPay', 'sales', ...expenses, 'shortfall']) {
     if (!receipt[key]) continue;
-    const expense = ['cost', 'housing', 'food', 'utilities', 'incident', 'tax', 'interest'].includes(key);
     const label = key === 'cost' ? language.cost + ' (' + language.paid + ')' : language[key];
-    rows.push([label, money(expense ? -receipt[key] : receipt[key])]);
+    rows.push([label, money(expenses.includes(key) ? -receipt[key] : receipt[key])]);
   }
   rows.push([language.margin, money(receipt.margin), true]);
   if (settled) rows.push([language.balance, money(receipt.balance), true]);
@@ -465,9 +530,10 @@ function nearestStop() {
 
 function transitPanel() {
   const bus = language.transit;
+  const fare = money(regions[life.locale].fare);
   return `<div class="bus-line"><strong>${bus.stops.neighborhood}</strong><span aria-hidden="true"></span><strong>${bus.stops.shops}</strong></div>
-    <p id="bus-status" role="status"></p><div class="button-row">
-      ${button('board-bus', bus.board)}
+    <p id="bus-fare" class="bus-fare"></p><p id="bus-status" role="status"></p><div class="button-row">
+      ${button('board-bus', bus.board + ' · ' + fare)}
       ${button('leave-bus', bus.request)}
       ${button('guide-bus', bus.guide, false, true)}
     </div>`;
@@ -478,6 +544,8 @@ function renderTransit() {
   const service = room.transit();
   const { stop, next } = readTransit(service);
   const nearby = nearbyStop(room.position());
+  const { fare } = regions[life.locale];
+  const canAfford = life.cash >= fare;
   const board = content.querySelector('[data-action="board-bus"]');
   const leave = content.querySelector('[data-action="leave-bus"]');
   const guide = content.querySelector('[data-action="guide-bus"]');
@@ -487,14 +555,18 @@ function renderTransit() {
       : stop ? bus.arrived(bus.stops[stop]) : bus.riding(bus.stops[next]);
   } else if (nearby) {
     const wait = waitForStop(service, nearby);
-    text = wait ? bus.waiting(bus.stops[nearby], Math.ceil(wait / 1_000)) : bus.ready(bus.stops[nearby]);
+    text = !canAfford ? bus.insufficient
+      : wait ? bus.waiting(bus.stops[nearby], Math.ceil(wait / 1_000)) : bus.ready(bus.stops[nearby]);
   } else {
     text = bus.needStop(bus.stops[nearestStop()]);
   }
   const status = get('bus-status');
   if (status.textContent !== text) status.textContent = text;
+  const fareText = service.aboard ? bus.paid : bus.fare(money(fare));
+  const fareLine = get('bus-fare');
+  if (fareLine.textContent !== fareText) fareLine.textContent = fareText;
   board.hidden = service.aboard || !nearby;
-  board.disabled = stop !== nearby;
+  board.disabled = !canAfford || stop !== nearby;
   leave.hidden = !service.aboard;
   leave.disabled = service.requested;
   leave.textContent = stop ? bus.alight : bus.request;
@@ -601,12 +673,17 @@ function gameAction(action) {
     case 'job-map':
       showPanel('map', false);
       return;
-    case 'board-bus':
-      if (room.board()) {
+    case 'board-bus': {
+      if (panel !== 'transport' || !room) return;
+      const paid = payBusFare(life);
+      if (paid !== life && room.board()) {
+        life = paid;
         persist();
+        updateHud();
         sheet.close();
       } else renderTransit();
       return;
+    }
     case 'leave-bus':
       room.leaveBus();
       persist();
@@ -660,8 +737,10 @@ welcome.addEventListener('click', (event) => {
 });
 get('play').addEventListener('click', (event) => {
   const control = event.target.closest('[data-panel]');
-  if (control) showPanel(control.dataset.panel);
+  if (control) showPanel(control.dataset.panel, !budgetDrawer.contains(control));
 });
+budgetToggle.addEventListener('click', () => setBudgetOpen(budgetDrawer.hidden));
+get('budget-close').addEventListener('click', () => setBudgetOpen(false));
 get('help').addEventListener('click', () => showPanel('help'));
 get('route').addEventListener('click', () => room?.focus('door'));
 get('bed').addEventListener('click', () => showPanel('sleep'));
@@ -702,7 +781,9 @@ content.addEventListener('change', (event) => {
 window.addEventListener('keydown', (event) => {
   if (!life || sheet.open || event.altKey || event.ctrlKey || event.metaKey) return;
   const key = event.key.toLowerCase();
-  if (key === 'e' && focusedAction && !event.repeat) {
+  if (key === 'escape' && !budgetDrawer.hidden) {
+    setBudgetOpen(false);
+  } else if (key === 'e' && focusedAction && !event.repeat) {
     showPanel(focusedAction);
   } else if (key === 'm' && room && !event.repeat) {
     showPanel('map');

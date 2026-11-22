@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createLife, closeMonth, monthlyStatement, projectFunding, restoreLife, scheduleSale, scheduleWork, transfer,
+  createLife, closeMonth, monthlyStatement, payBusFare, projectFunding, restoreLife, scheduleSale, scheduleWork, transfer,
 } from './economy.js';
 
 const newLife = () => createLife('en-US', () => 0);
@@ -53,4 +53,41 @@ test('a repair can create a shortfall, which is covered by debt with cash at zer
   assert.equal(settled.lastReceipt.shortfall, 141);
   assert.equal(settled.cash, 0);
   assert.equal(settled.debt, 539);
+});
+
+test('the rent and split utility bills add up to the essentials and monthly expenses', () => {
+  for (const locale of ['es-MX', 'en-US']) {
+    for (const draw of [0, 0.5, 0.99]) {
+      const life = createLife(locale, () => draw);
+      const bill = monthlyStatement(life);
+      assert.equal(bill.housing, life.housing);
+      assert.equal(bill.electricity + bill.water + bill.internet, life.utilities);
+      assert.equal(bill.essentials, bill.housing + bill.food + life.utilities);
+      assert.equal(bill.pendingIncome - bill.expenses, bill.margin);
+    }
+  }
+});
+
+test('each paid ride reduces cash and monthly margin once, and survives a reload', () => {
+  const initial = createLife('es-MX', () => 0);
+  const baseline = monthlyStatement(initial);
+  const rode = payBusFare(payBusFare(initial));
+  assert.equal(rode.cash, initial.cash - 24);
+  assert.equal(monthlyStatement(rode).margin, baseline.margin - 24);
+  assert.equal(monthlyStatement(rode).expenses, baseline.expenses + 24);
+  assert.deepEqual(restoreLife(JSON.stringify(rode)), rode);
+  const settled = closeMonth(rode);
+  assert.equal(settled.cash, baseline.balance - 24);
+  assert.equal(settled.lastReceipt.transitSpent, 24);
+  assert.equal(monthlyStatement(settled).transitSpent, 0);
+});
+
+test('a fare needs enough available cash and old saves begin with zero fares', () => {
+  const { transitSpent, ...oldSave } = newLife();
+  const rider = restoreLife(JSON.stringify({ ...oldSave, cash: 2 }));
+  assert.equal(rider.transitSpent, 0);
+  const paid = payBusFare(rider);
+  assert.equal(paid.cash, 0);
+  assert.equal(paid.transitSpent, 2);
+  assert.equal(payBusFare(paid), paid);
 });
