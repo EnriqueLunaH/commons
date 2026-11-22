@@ -116,7 +116,6 @@ export function closeMonth(life) {
     debt: life.debt + receipt.interest + receipt.shortfall,
     contributed: life.contributed + receipt.tax,
     month: life.month + 1,
-    moment: moments[(moments.indexOf(life.moment) + 1) % moments.length],
     activity: null,
     lastReceipt: receipt,
   };

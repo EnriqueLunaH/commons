@@ -30,7 +30,7 @@ test('supplies are paid once and a negative margin on a batch is not taxed', () 
   assert.equal(settled.lastReceipt.sold, 2);
   assert.equal(settled.lastReceipt.tax, monthlyStatement(initial).tax);
   assert.equal(projectFunding(settled) - projectFunding(initial), settled.lastReceipt.tax);
-  assert.equal(settled.moment, 'dinner');
+  assert.equal(settled.moment, initial.moment);
   assert.deepEqual(restoreLife(JSON.stringify(settled)), settled);
 });
 

@@ -10,11 +10,19 @@ const colors = {
   white: 0xeedbc3, charcoal: 0x343931, gold: 0xde9b48, blue: 0x587276,
 };
 
-const lightStyles = {
-  breakfast: { sky: 0xc5c9ac, bounce: 0xffedcd, sun: 0xffe5ac, key: 2.4, ambient: 1.7, lamp: 11 },
-  dinner: { sky: 0xbe9a81, bounce: 0xf5bfa3, sun: 0xffb788, key: 1.9, ambient: 1.5, lamp: 22 },
-  dawn: { sky: 0x626e83, bounce: 0xb8c3ef, sun: 0x9db8ec, key: 1.35, ambient: 1.15, lamp: 26 },
-};
+const lighting = [
+  [0, 0x29394e, 0xacbce8, 0x90a8d8, 0.40, 0.73, 27, 0.22],
+  [300, 0x29394e, 0xacbce8, 0x90a8d8, 0.40, 0.73, 27, 0.22],
+  [360, 0xb4a39a, 0xf0caab, 0xf3c09c, 1.48, 1.31, 20, 0.52],
+  [468, 0xc5c9ac, 0xffedcd, 0xffe5ac, 2.40, 1.70, 11, 0.68],
+  [978, 0xc5c9ac, 0xffedcd, 0xffe5ac, 2.40, 1.70, 11, 0.68],
+  [1_080, 0xbe947e, 0xf2bdab, 0xffb788, 1.68, 1.43, 22, 0.48],
+  [1_170, 0x29394e, 0xacbce8, 0x90a8d8, 0.40, 0.73, 27, 0.22],
+  [1_440, 0x29394e, 0xacbce8, 0x90a8d8, 0.40, 0.73, 27, 0.22],
+].map(([minute, sky, bounce, sun, key, ambient, lamp, fill]) => ({
+  minute, sky: new THREE.Color(sky), bounce: new THREE.Color(bounce), sun: new THREE.Color(sun),
+  key, ambient, lamp, fill,
+}));
 
 const landmarks = {
   budget: [-1.5, 1.13, 0.0],
@@ -22,6 +30,7 @@ const landmarks = {
   debt: [2.29, 1.20, -3.09],
   work: [-3.05, 2.18, -4.44],
   diary: [-0.7, 1.13, -0.60],
+  sleep: [-3.65, 0.91, 2.87],
 };
 const doorway = [5.31, 1.59, 1.45];
 
@@ -52,6 +61,8 @@ export function createRoom(canvas, onAnchors) {
   renderer.toneMappingExposure = 1.15;
 
   const scene = new THREE.Scene();
+  scene.background = new THREE.Color();
+  scene.fog = new THREE.Fog(0x000000, 13, 38);
   const camera = new THREE.PerspectiveCamera(58, 1, 0.06, 56);
   camera.rotation.order = 'YXZ';
   const paper = makePaper();
@@ -235,6 +246,14 @@ export function createRoom(canvas, onAnchors) {
       [C.blue, C.clay, C.paleGreen, C.paper, C.wood, C.green][i], 0.014).rotation.z = i === 5 ? 0.15 : 0;
   }
 
+  box(1.57, 0.30, 2.23, -3.63, 0.24, 2.94, C.darkWood, 0.06);
+  box(1.60, 0.88, 0.12, -3.63, 0.43, 4.04, C.wood, 0.078);
+  box(1.48, 0.21, 2.10, -3.63, 0.48, 2.92, C.white, 0.098);
+  box(0.99, 0.16, 0.52, -3.63, 0.61, 3.68, C.paper, 0.075);
+  box(1.53, 0.12, 1.44, -3.63, 0.60, 2.59, C.green, 0.058);
+  box(1.54, 0.066, 0.24, -3.63, 0.67, 3.19, C.paleGreen, 0.030);
+  for (const z of [2.12, 2.20, 2.29]) box(1.43, 0.011, 0.018, -3.63, 0.665, z, C.paleGreen, 0.004);
+
   cylinder(0.022, 0.022, 0.57, -1.34, 3.29, -0.44, C.charcoal);
   const shade = cylinder(0.14, 0.39, 0.24, -1.34, 2.90, -0.44, C.clay);
   shade.material = shade.material.clone();
@@ -261,21 +280,23 @@ export function createRoom(canvas, onAnchors) {
   fill.position.set(-3, 2, 5);
   scene.add(fill);
 
-  function setMoment(moment) {
-    const style = lightStyles[moment];
-    scene.background = new THREE.Color(style.sky);
-    scene.fog = new THREE.Fog(style.sky, 13, 38);
-    skyLight.color.set(style.bounce);
-    skyLight.intensity = style.ambient;
-    sun.color.set(style.sun);
-    sun.intensity = style.key;
-    lamp.intensity = style.lamp;
-    shade.material.emissive.set(0x9b4f28);
-    shade.material.emissiveIntensity = moment === 'breakfast' ? 0.15 : 0.35;
-    meal.visible = moment !== 'dawn';
-    bread.visible = moment === 'breakfast';
-    stew.visible = moment === 'dinner';
-    renderer.shadowMap.needsUpdate = true;
+  shade.material.emissive.set(0x9b4f28);
+
+  function setTime(minute) {
+    const index = lighting.findIndex((style) => style.minute > minute);
+    const before = lighting[index - 1];
+    const after = lighting[index];
+    const ratio = THREE.MathUtils.smoothstep(minute, before.minute, after.minute);
+    const intensity = (key) => THREE.MathUtils.lerp(before[key], after[key], ratio);
+    scene.background.lerpColors(before.sky, after.sky, ratio);
+    scene.fog.color.copy(scene.background);
+    skyLight.color.lerpColors(before.bounce, after.bounce, ratio);
+    skyLight.intensity = intensity('ambient');
+    sun.color.lerpColors(before.sun, after.sun, ratio);
+    sun.intensity = intensity('key');
+    lamp.intensity = intensity('lamp');
+    fill.intensity = intensity('fill');
+    shade.material.emissiveIntensity = lamp.intensity / 75;
   }
 
   const projection = new THREE.Vector3();
@@ -301,6 +322,7 @@ export function createRoom(canvas, onAnchors) {
     [1.695, 4.085, -3.765, -3.015], // Sideboard
     [4.375, 5.045, -2.475, -1.005], // Savings cabinet
     [-4.545, -1.795, -4.605, -3.715], // Work cabinet
+    [-4.43, -2.83, 1.80, 4.10], // Bed
     ...obstacles,
   ], neighborhoodLimits);
 
@@ -317,7 +339,10 @@ export function createRoom(canvas, onAnchors) {
     target = null;
     keys.clear();
     walk.stop();
-    setMoment(moment);
+    meal.visible = moment !== 'dawn';
+    bread.visible = moment === 'breakfast';
+    stew.visible = moment === 'dinner';
+    renderer.shadowMap.needsUpdate = true;
     if (!active) {
       camera.position.set(-0.86, 1.65, 3.42);
       goalAt([0.28, 1.25, -2.65]);
@@ -407,10 +432,11 @@ export function createRoom(canvas, onAnchors) {
   new ResizeObserver(resize).observe(holder);
   resize();
   spawn('breakfast', false);
+  setTime(438);
   renderer.setAnimationLoop(frame);
   return {
     spawn,
-    setMoment,
+    setTime,
     focus(id) {
       target = id === 'door' || Object.hasOwn(landmarks, id) ? id : null;
     },

@@ -263,6 +263,18 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 }
 .sheet[open] { display: flex; flex-direction: column; }
 .sheet::backdrop { background: #201a11a3; backdrop-filter: blur(4px); }
+.sheet.sleeping {
+  color: var(--cream);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-align: center;
+}
+.sheet.sleeping::backdrop { background: #16191f; }
+.sheet.sleeping .sheet-header { display: block; background: transparent; border: 0; padding-block: 1rem 0; }
+.sheet.sleeping .sheet-header h2 { font-size: clamp(2.15rem, 8vw, 4rem); }
+.sheet.sleeping .eyebrow, .sheet.sleeping .sheet-body { color: #d6c6a8; }
+.sheet.sleeping .icon-close { display: none; }
 .sheet-header {
   display: flex;
   flex: 0 0 auto;
