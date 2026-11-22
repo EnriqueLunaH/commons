@@ -1,4 +1,5 @@
 import { blockSize, cityBlocks, cityLimits, destinations } from './city-layout.js';
+import { commuteRoute, workplaces } from './employment.js';
 
 const districtTones = {
   street: '#dfceb1',
@@ -9,11 +10,11 @@ const districtTones = {
   centralPark: '#8f9b71',
 };
 
-export function drawCityMap(canvas, position, language, wholeCity) {
+export function drawCityMap(canvas, position, language, wholeCity, occupation) {
   const ctx = canvas.getContext('2d');
   const size = canvas.width;
   const inset = 20;
-  const length = wholeCity ? cityLimits[1] - cityLimits[0] : blockSize * 7;
+  const length = wholeCity ? cityLimits[1] - cityLimits[0] : blockSize * 4;
   const scale = (size - inset * 2) / length;
   const left = Math.min(Math.max(position.x - length / 2, cityLimits[0]), cityLimits[1] - length);
   const top = Math.min(Math.max(position.z - length / 2, cityLimits[2]), cityLimits[3] - length);
@@ -61,7 +62,18 @@ export function drawCityMap(canvas, position, language, wholeCity) {
   }
 
   if (!wholeCity) {
+    const route = commuteRoute(occupation);
+    ctx.beginPath();
+    ctx.moveTo(mapX(route[0].x), mapY(route[0].z));
+    for (const { x, z } of route.slice(1)) ctx.lineTo(mapX(x), mapY(z));
+    ctx.setLineDash([3, 2]);
+    ctx.strokeStyle = '#a56842';
+    ctx.lineWidth = 2.1;
+    ctx.stroke();
+    ctx.setLineDash([]);
     point(0, 0, language.zones.home, '#554333', true);
+    const work = workplaces[occupation];
+    point(work.x, work.z, language.employment.sites[occupation], '#a56842');
     for (const [name, place] of Object.entries(destinations)) {
       point(place.x, place.z, language.zones[name], '#554333');
     }

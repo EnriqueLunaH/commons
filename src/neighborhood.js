@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import { cityBlockAt } from './city-layout.js';
+import { workplaceAt } from './employment.js';
 
 export function neighborhoodZone({ x, z }) {
   if (Math.abs(x) < 5.31 && z > -4.82 && z < 5.04) return 'home';
+  const workplace = workplaceAt({ x, z });
+  if (workplace) return workplace;
   if (x > 12.8 && x < 24 && z > -11.6 && z < 1.75) return 'park';
   return cityBlockAt(x, z)?.zone ?? 'residential';
 }

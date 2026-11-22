@@ -4,6 +4,8 @@ import { createWalk } from './walk.js';
 import { buildNeighborhood, neighborhoodZone } from './neighborhood.js';
 import { buildCity } from './city.js';
 import { cityLimits } from './city-layout.js';
+import { atWorkCounter } from './employment.js';
+import { buildWorkplaces } from './workplaces.js';
 
 const colors = {
   cream: 0xe5d4b6, wall: 0xc8ae8d, trim: 0x907756, wood: 0xb1845d,
@@ -151,6 +153,7 @@ export function createRoom(canvas, onAnchors) {
   const city = buildCity(scene, paper);
   const { obstacles, lantern, streetLight, ripples } =
     buildNeighborhood({ scene, box, cylinder, oval, object, colors: C });
+  const workplaces = buildWorkplaces({ scene, box, cylinder, oval, object, colors: C });
 
   const rug = box(3.53, 0.033, 2.78, -1.34, 0.028, 0.02, 0xa97558, 0.045);
   rug.castShadow = false;
@@ -329,6 +332,7 @@ export function createRoom(canvas, onAnchors) {
     [-4.43, -2.83, 1.80, 4.10], // Bed
     ...obstacles,
     ...city.obstacles,
+    ...workplaces.obstacles,
   ], cityLimits);
 
   function goalAt(point) {
@@ -414,15 +418,19 @@ export function createRoom(canvas, onAnchors) {
     renderer.render(scene, camera);
     if (playing) {
       const zone = neighborhoodZone(camera.position);
-      const locations = Object.fromEntries(Object.entries(landmarks).map(([id, point]) => {
+      function project(point, areaVisible) {
         projection.set(...point).project(camera);
         const x = (projection.x + 1) * dimensions.width / 2;
         const y = (1 - projection.y) * dimensions.height / 2;
-        const visible = zone === 'home' && projection.z < 1 && projection.z > -1
+        const visible = areaVisible && projection.z < 1 && projection.z > -1
           && x > 35 && x < dimensions.width - 35
           && y > (dimensions.width <= 680 ? 148 : 114) && y < dimensions.height - 128;
-        return [id, { x, y, visible }];
-      }));
+        return { x, y, visible };
+      }
+      const locations = Object.fromEntries(Object.entries(landmarks)
+        .map(([id, point]) => [id, project(point, zone === 'home')]));
+      const station = workplaces.anchors[zone];
+      locations.job = station ? project(station, atWorkCounter(zone, camera.position)) : { visible: false };
       onAnchors(locations, dimensions, zone);
     }
   }
@@ -453,6 +461,9 @@ export function createRoom(canvas, onAnchors) {
     position() {
       return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw, pitch };
     },
+    zone() { return neighborhoodZone(camera.position); },
+    localizeWorkplaces(labels) { workplaces.localize(labels); },
+    showWorkGoods(occupation) { workplaces.prepared(occupation); },
     focus(id) {
       target = id === 'door' ? doorway : landmarks[id] ?? null;
     },

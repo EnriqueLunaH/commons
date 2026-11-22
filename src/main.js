@@ -2,12 +2,13 @@ import './style.css';
 import { copy } from './copy.js';
 import {
   regions, createLife, marketOffer, monthlyStatement, closeMonth, projectGoal, projectFunding,
-  basePrices, lotSizes, shiftPay, scheduleSale, scheduleWork, transfer, restoreLife,
+  basePrices, lotSizes, shiftPay, dailyWage, scheduleSale, scheduleWork, transfer, restoreLife,
 } from './economy.js';
 import { createSoundscape } from './sound.js';
 import { advanceClock, createClock, readClock, startSleep } from './clock.js';
 import { drawCityMap } from './city-map.js';
 import { destinations } from './city-layout.js';
+import { advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome } from './employment.js';
 
 const storageKey = 'commons.life.v1';
 const app = document.querySelector('#app');
@@ -15,6 +16,7 @@ const sound = createSoundscape();
 const actionIcons = { budget: '≡', savings: '◈', debt: '▤', work: '✦', diary: '✎' };
 const actions = Object.keys(actionIcons);
 const roomActions = [...actions, 'sleep'];
+const markedActions = [...roomActions, 'job'];
 const controlledKeys = ['w', 'a', 's', 'd', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'];
 const preferredLocale = navigator.language.toLowerCase().startsWith('es') ? 'es-MX' : 'en-US';
 
@@ -56,6 +58,7 @@ app.innerHTML = `
           <div class="tools">
             <button type="button" class="tool" id="route" hidden></button>
             <button type="button" class="tool" id="bed" hidden></button>
+            <button type="button" class="tool" id="job"></button>
             <button type="button" class="tool" id="map" hidden></button>
             <button type="button" class="tool" id="sound"></button>
             <button type="button" class="tool" id="help"></button>
@@ -90,7 +93,7 @@ const welcome = get('welcome');
 const sheet = get('sheet');
 const content = get('sheet-body');
 const markerLayer = get('markers');
-const markerElements = Object.fromEntries(roomActions.map((action) => {
+const markerElements = Object.fromEntries(markedActions.map((action) => {
   const element = document.createElement('button');
   element.type = 'button';
   element.className = 'marker';
@@ -103,6 +106,7 @@ const markerElements = Object.fromEntries(roomActions.map((action) => {
 function paintMarkers(locations, { width, height }, currentZone) {
   if (zone !== currentZone) {
     zone = currentZone;
+    if (registerHome()) persist();
     updateHud();
     updateThought();
   }
@@ -110,7 +114,8 @@ function paintMarkers(locations, { width, height }, currentZone) {
   let nearest = Math.min(width, height) * 0.18;
   for (const [action, location] of Object.entries(locations)) {
     const marker = markerElements[action];
-    marker.hidden = !location.visible || (action === 'sleep' && !canSleep());
+    marker.hidden = !location.visible || (action === 'sleep' && !canSleep())
+      || (action === 'job' && currentZone !== life.employment.occupation);
     if (marker.hidden) continue;
     marker.style.transform = `translate3d(${location.x}px, ${location.y}px, 0) translate(-50%, -50%)`;
     const distance = Math.hypot(location.x - width / 2, location.y - height / 2);
@@ -187,11 +192,17 @@ function enter() {
   get('play').hidden = false;
   app.classList.add('in-life');
   room?.spawn(life.moment, true, life.position);
+  if (room) {
+    zone = room.zone();
+    room.localizeWorkplaces(language.employment.sites);
+  }
+  if (room || !life.position) registerHome();
   room?.setTime(readClock(clock).minute);
   updateThought();
   get('hint').textContent = language.hint;
   get('help').textContent = language.help;
   get('map').textContent = language.map;
+  get('job').textContent = language.employment.title;
   get('bed').textContent = language.sleep;
   get('render-error').textContent = language.webgl;
   get('close').setAttribute('aria-label', language.close);
@@ -201,8 +212,8 @@ function enter() {
       <span class="action-icon" aria-hidden="true">${actionIcons[action]}</span>
       <span>${language.actions[action]}</span>
     </button>`).join('');
-  for (const action of roomActions) {
-    const label = language.actions[action] ?? language[action];
+  for (const action of markedActions) {
+    const label = action === 'job' ? language.employment.title : language.actions[action] ?? language[action];
     markerElements[action].textContent = label;
     markerElements[action].setAttribute('aria-label', language.interact + ' · ' + label);
   }
@@ -216,6 +227,32 @@ function enter() {
 }
 
 const money = (amount) => currency.format(amount);
+
+function registerHome() {
+  if (zone !== 'home') return false;
+  const employment = visitHome(life.employment, clock.day);
+  if (employment === life.employment) return false;
+  life = { ...life, employment };
+  return true;
+}
+
+const currentShift = () => employmentStatus(life.employment, clock.day, readClock(clock));
+const atAssignedCounter = () => atWorkCounter(life.employment.occupation, room?.position());
+const shouldHeadHome = (status) => ['returning', 'startHome', 'closed'].includes(status);
+
+function guideCommute() {
+  if (!room) return;
+  const status = currentShift();
+  const goingHome = shouldHeadHome(status);
+  if (status === 'finished' || (goingHome && zone === 'home') || (!goingHome && atAssignedCounter())) return;
+  room.lookToward(nextCommutePoint(life.employment.occupation, room.position(), goingHome));
+}
+
+function renderEmployment() {
+  get('job-status').textContent = language.employment.short[currentShift()];
+  const { occupation, shiftDay, stage } = life.employment;
+  room?.showWorkGoods(shiftDay === clock.day && ['prepared', 'returning', 'finished'].includes(stage) ? occupation : null);
+}
 
 function canSleep() {
   return zone === 'home' && clock && !clock.rest && readClock(clock).night;
@@ -239,6 +276,13 @@ function tickClock() {
   clockTick = now;
   const before = readClock(previous);
   const after = readClock(clock);
+  const previousShift = employmentStatus(life.employment, previous.day, before);
+  if (previous.day !== clock.day) {
+    if (room) registerHome();
+    updateHud();
+    persist();
+  } else if (previousShift !== currentShift()) renderEmployment();
+  if (panel === 'job' && (previous.day !== clock.day || previousShift !== currentShift())) showPanel('job', false);
   room?.setTime(after.minute);
   if (Math.floor(before.minute) !== Math.floor(after.minute)
     || Math.ceil(previous.rest / 1_000) !== Math.ceil(clock.rest / 1_000)) renderClock();
@@ -257,11 +301,14 @@ function updateHud() {
     <p class="location">${language.zones[zone]} · ${language.month} ${life.month}
       <span class="when" id="world-time"></span>
     </p>
-    <p class="profile">${life.age} ${language.age} · ${language.gender[life.gender]} · ${language.household[life.household]}</p>`;
+    <p class="profile">${life.age} ${language.age} · ${language.gender[life.gender]} · ${language.household[life.household]}</p>
+    <p class="profile employment-line">${language.employment.roles[life.employment.occupation][life.gender]}
+      · <span id="job-status"></span></p>`;
   get('pockets').innerHTML = ['cash', 'savings', 'debt'].map((key) => `
     <div><span>${language[key]}</span><strong>${money(life[key])}</strong></div>`).join('');
   get('route').textContent = zone === 'home' ? language.exit : language.returnHome;
   renderClock();
+  renderEmployment();
   room?.funded(projectFunding(life) >= projectGoal(life));
 }
 
@@ -360,6 +407,7 @@ function cityMapPanel() {
       <span class="map-downtown">${language.zones.downtown}</span>
       <span class="map-market">${language.zones.market}</span>
       <span class="map-parks">${language.mapParks}</span>
+      <span class="map-commute">${language.employment.mapRoute}</span>
     </div>
     <div class="button-row map-actions">
       ${button('map-scale', wholeCity ? language.mapNearby : language.mapOverview, false, true)}
@@ -369,14 +417,41 @@ function cityMapPanel() {
     </div></fieldset>`;
 }
 
+function jobPanel() {
+  const status = currentShift();
+  const employment = language.employment;
+  const { occupation, earned } = life.employment;
+  const onSite = atAssignedCounter();
+  const onDuty = ['commute', 'working', 'prepared'].includes(status);
+  const heading = onDuty && onSite ? employment.onSite[status] : employment.states[status];
+  const label = status === 'commute' ? employment.clockIn
+    : status === 'working' ? employment.tasks[occupation] : employment.finish;
+  const goingHome = shouldHeadHome(status);
+  const guide = room && status !== 'finished' && (goingHome ? zone !== 'home' : !onSite);
+  return `<p>${heading}</p>
+    ${figures([
+      [employment.site, employment.sites[occupation]],
+      [employment.wage, money(dailyWage(life))],
+      [employment.earned, money(earned), true],
+    ])}
+    <p class="job-pay-note">${employment.payNote}</p>
+    <div class="button-row">
+      ${onSite && onDuty ? button('advance-job', label) : ''}
+      ${guide ? button('guide-job', goingHome ? employment.guideHome : employment.guide, false, true) : ''}
+      ${room ? button('job-map', language.map, false, true) : ''}
+    </div>`;
+}
+
 function showPanel(id, focusView = true) {
   if (!life || (clock.rest && id !== 'sleeping') || (id === 'sleep' && !canSleep())) return;
   panel = id;
   room?.stop();
   if (focusView && zone === 'home' && roomActions.includes(id)) room?.focus(id);
   sheet.classList.toggle('sleeping', id === 'sleeping');
-  get('sheet-title').textContent = id === 'map' ? language.mapTitle : language.actions[id] ?? language[id];
-  get('sheet-subtitle').textContent = id === 'map' ? '' : id === 'sleep' || id === 'sleeping' ? language.night
+  get('sheet-title').textContent = id === 'map' ? language.mapTitle
+    : id === 'job' ? language.employment.title : language.actions[id] ?? language[id];
+  get('sheet-subtitle').textContent = id === 'job' ? language.employment.day + ' ' + clock.day
+    : id === 'map' ? '' : id === 'sleep' || id === 'sleeping' ? language.night
     : language.subtitles[id] ?? (language.month + ' ' + (life.lastReceipt?.month ?? life.month));
 
   const step = 50 * regions[life.locale].scale;
@@ -395,6 +470,7 @@ function showPanel(id, focusView = true) {
       [language.debt, money(life.debt)], [language.interest, money(monthlyStatement(life).interest), true],
     ])}${button('payDebt', language.pay + ' · ' + amount(Math.min(life.cash, life.debt)), !life.debt || !life.cash)}`,
     work: works,
+    job: jobPanel,
     map: cityMapPanel,
     diary: () => {
       const mood = receipt ? currentThought() : language.journal;
@@ -406,7 +482,7 @@ function showPanel(id, focusView = true) {
     sleeping: () => `<p id="sleep-remaining" role="status">${language.seconds(Math.ceil(clock.rest / 1_000))}</p>`,
   };
   content.innerHTML = panels[id]();
-  if (id === 'map') drawCityMap(get('city-plan'), room.position(), language, wholeCity);
+  if (id === 'map') drawCityMap(get('city-plan'), room.position(), language, wholeCity, life.employment.occupation);
   content.scrollTop = 0;
   if (!sheet.open) sheet.showModal();
 }
@@ -421,6 +497,18 @@ function gameAction(action) {
       break;
     case 'receipt':
       showPanel('receipt', false);
+      return;
+    case 'advance-job':
+      tickClock();
+      if (panel !== 'job') return;
+      life = { ...life, employment: advanceShift(life.employment, clock.day, readClock(clock), atAssignedCounter(), dailyWage(life)) };
+      break;
+    case 'guide-job':
+      sheet.close();
+      guideCommute();
+      return;
+    case 'job-map':
+      showPanel('map', false);
       return;
     case 'map-scale':
       wholeCity = !wholeCity;
@@ -462,6 +550,7 @@ get('play').addEventListener('click', (event) => {
 get('help').addEventListener('click', () => showPanel('help'));
 get('route').addEventListener('click', () => room?.focus('door'));
 get('bed').addEventListener('click', () => showPanel('sleep'));
+get('job').addEventListener('click', () => showPanel('job'));
 get('map').addEventListener('click', () => showPanel('map'));
 get('sound').addEventListener('click', async () => {
   get('sound').disabled = true;
@@ -500,6 +589,8 @@ window.addEventListener('keydown', (event) => {
     showPanel(focusedAction);
   } else if (key === 'm' && room && !event.repeat) {
     showPanel('map');
+  } else if (key === 'g' && !event.repeat) {
+    guideCommute();
   } else if (controlledKeys.includes(key)) {
     event.preventDefault();
     room?.key(key, true);
@@ -511,6 +602,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (clock && clockTick !== null) clock = advanceClock(clock, performance.now() - clockTick);
     room?.stop();
+    if (room) registerHome();
     persist();
   }
   clockTick = null;
@@ -518,6 +610,7 @@ document.addEventListener('visibilitychange', () => {
     // Reconcile a transition that may have finished just before the tab went away.
     if (sheet.open && ((panel === 'sleeping' && !clock.rest) || (panel === 'sleep' && !canSleep()))) sheet.close();
     renderClock();
+    renderEmployment();
     tickClock();
   }
 });
@@ -546,9 +639,12 @@ import('./room.js').then(({ createRoom }) => {
   get('map').hidden = false;
   if (life) {
     room.spawn(life.moment, true, life.position);
+    zone = room.zone();
+    room.localizeWorkplaces(language.employment.sites);
+    if (registerHome()) persist();
     room.setTime(readClock(clock).minute);
-    renderClock();
-    room.funded(projectFunding(life) >= projectGoal(life));
+    updateHud();
+    updateThought();
   }
 }).catch((error) => {
   console.error('Could not render the room', error);

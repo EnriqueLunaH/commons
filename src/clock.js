@@ -12,15 +12,16 @@ export function createClock(moment, saved) {
   if (saved && Number.isFinite(saved.elapsed) && saved.elapsed >= 0 && saved.elapsed < cycleDuration) {
     const rest = saved.elapsed >= dayDuration && Number.isFinite(saved.rest)
       && saved.rest > 0 && saved.rest <= sleepDuration ? saved.rest : 0;
-    return { elapsed: saved.elapsed, rest };
+    const day = Number.isSafeInteger(saved.day) && saved.day >= 1 ? saved.day : 1;
+    return { elapsed: saved.elapsed, rest, day };
   }
 
   const minute = startingMinutes[moment];
   if (minute >= dawnMinute && minute < duskMinute) {
-    return { elapsed: (minute - dawnMinute) / halfDay * dayDuration, rest: 0 };
+    return { elapsed: (minute - dawnMinute) / halfDay * dayDuration, rest: 0, day: 1 };
   }
   const nightMinutes = (minute - duskMinute + 1_440) % 1_440;
-  return { elapsed: dayDuration + nightMinutes / halfDay * nightDuration, rest: 0 };
+  return { elapsed: dayDuration + nightMinutes / halfDay * nightDuration, rest: 0, day: 1 };
 }
 
 export function readClock(clock) {
@@ -40,7 +41,9 @@ export function advanceClock(clock, elapsed) {
   if (elapsed <= 0) return clock;
   if (clock.rest) {
     if (elapsed < clock.rest) return { ...clock, rest: clock.rest - elapsed };
-    return { elapsed: (elapsed - clock.rest) % cycleDuration, rest: 0 };
+    const total = elapsed - clock.rest;
+    return { elapsed: total % cycleDuration, rest: 0, day: clock.day + 1 + Math.floor(total / cycleDuration) };
   }
-  return { elapsed: (clock.elapsed + elapsed) % cycleDuration, rest: 0 };
+  const total = clock.elapsed + elapsed;
+  return { elapsed: total % cycleDuration, rest: 0, day: clock.day + Math.floor(total / cycleDuration) };
 }
