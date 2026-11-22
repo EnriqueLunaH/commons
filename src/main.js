@@ -22,7 +22,7 @@ const sound = createSoundscape();
 const actionIcons = { budget: '≡', savings: '◈', debt: '▤', work: '✦', diary: '✎' };
 const actions = Object.keys(actionIcons);
 const roomActions = [...actions, 'sleep'];
-const markedActions = [...roomActions, 'job', 'transport', ...residentIds];
+const markedActions = [...roomActions, 'job', 'customer', 'transport', ...residentIds];
 const controlledKeys = ['w', 'a', 's', 'd', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'];
 const essentials = ['housing', 'electricity', 'water', 'internet', 'food'];
 const otherExpenses = ['cost', 'incident', 'tax', 'interest'];
@@ -128,7 +128,7 @@ const markerElements = Object.fromEntries(markedActions.map((action) => {
   const element = document.createElement('button');
   element.type = 'button';
   element.className = 'marker';
-  element.dataset.panel = action;
+  element.dataset.panel = action === 'customer' ? 'job' : action;
   element.hidden = true;
   markerLayer.append(element);
   return [action, element];
@@ -146,8 +146,14 @@ function paintMarkers(locations, { width, height }, currentZone) {
   for (const [action, location] of Object.entries(locations)) {
     const marker = markerElements[action];
     marker.hidden = !location.visible || (action === 'sleep' && !canSleep())
-      || (action === 'job' && currentZone !== life.employment.occupation);
+      || ((action === 'job' || action === 'customer') && currentZone !== life.employment.occupation);
     if (marker.hidden) continue;
+    if (action === 'customer' && marker.dataset.guest !== location.guest) {
+      marker.dataset.guest = location.guest;
+      const label = language.employment.serve + ' · ' + customers[location.guest].name;
+      marker.textContent = label;
+      marker.setAttribute('aria-label', label);
+    }
     marker.style.transform = `translate3d(${location.x}px, ${location.y}px, 0) translate(-50%, -50%)`;
     const distance = Math.hypot(location.x - width / 2, location.y - height / 2);
     if (distance < nearest) {
@@ -878,7 +884,7 @@ window.addEventListener('keydown', (event) => {
   if (key === 'escape' && !budgetDrawer.hidden) {
     setBudgetOpen(false);
   } else if (key === 'e' && focusedAction && !event.repeat) {
-    showPanel(focusedAction);
+    showPanel(markerElements[focusedAction].dataset.panel);
   } else if (key === 'm' && room && !event.repeat) {
     showPanel('map');
   } else if (key === 'g' && !event.repeat) {

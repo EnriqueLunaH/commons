@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { workplaces } from './employment.js';
+import { customerRoute } from './employment.js';
 import { customers, residents } from './residents.js';
 
 const walkingPeriod = 7_800;
@@ -60,25 +60,40 @@ export function buildCharacters({ scene, box, oval, colors: C }) {
     }
   }
 
+  let customerPath = [];
+  let routeLength = 0;
   return {
-    shopVisit(occupation, customer) { visit = customer ? { ...customer, occupation } : null; },
+    shopVisit(occupation, customer) {
+      if (customer && (customer.guest !== visit?.guest || occupation !== visit.occupation)) {
+        const points = customerRoute(occupation, customer.guest);
+        routeLength = 0;
+        customerPath = points.slice(1).map((end, index) => {
+          const start = points[index];
+          const dx = end.x - start.x;
+          const dz = end.z - start.z;
+          const length = Math.hypot(dx, dz);
+          const segment = { start, dx, dz, length, distance: routeLength };
+          routeLength += length;
+          return segment;
+        });
+      }
+      visit = customer ? { ...customer, occupation } : null;
+    },
     update(now, reduceMotion, viewer) {
       for (const figure of figures) {
         const { id, group, trail, offset, bag, bouquet } = figure;
         if (!trail) {
           group.visible = visit?.guest === id;
           if (!group.visible) continue;
-          const { x, z, depth } = workplaces[visit.occupation];
-          const entry = z - depth / 2;
-          const path = [[x + 1.45, entry - 1.3], [x, entry - 0.4], [x - 0.39, z - 0.22]];
-          const stage = Math.min(path.length - 2, Math.floor(visit.progress * (path.length - 1)));
-          const [start, end] = path.slice(stage, stage + 2);
-          const fraction = visit.progress * (path.length - 1) - stage;
-          group.position.set(THREE.MathUtils.lerp(start[0], end[0], fraction), 0,
-            THREE.MathUtils.lerp(start[1], end[1], fraction));
+          const distance = visit.progress * routeLength;
+          const { start, dx, dz, length, distance: startDistance } = customerPath.find(
+            (segment) => distance < segment.distance + segment.length,
+          ) ?? customerPath.at(-1);
+          const fraction = (distance - startDistance) / length;
+          group.position.set(start.x + dx * fraction, 0, start.z + dz * fraction);
           const direction = visit.phase === 'leaving' ? -1 : 1;
           group.rotation.y = visit.phase === 'waiting' ? Math.PI
-            : Math.atan2((start[0] - end[0]) * direction, (start[1] - end[1]) * direction);
+            : Math.atan2(-dx * direction, -dz * direction);
           bag.visible = visit.bought && visit.occupation === 'bakery';
           bouquet.visible = visit.bought && visit.occupation === 'florist';
           animateGait(figure, reduceMotion || visit.phase === 'waiting' ? 0 : Math.sin(now / 185) * 0.24);
@@ -103,6 +118,11 @@ export function buildCharacters({ scene, box, oval, colors: C }) {
       }
     },
     talk(id) { talking = id; },
+    waitingCustomer(zone) {
+      if (visit?.phase !== 'waiting' || visit.occupation !== zone) return null;
+      const { x, z } = figures.find(({ id }) => id === visit.guest).group.position;
+      return { guest: visit.guest, point: [x, 1.69, z] };
+    },
     nearby(position, zone) {
       return figures.filter(({ place }) => place).map(({ id, group, place }) => {
         const { x, z } = group.position;

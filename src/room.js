@@ -478,7 +478,10 @@ export function createRoom(canvas, onAnchors) {
       const locations = Object.fromEntries(Object.entries(landmarks)
         .map(([id, point]) => [id, project(point, zone === 'home')]));
       const station = workplaces.anchors[zone];
-      locations.job = station ? project(station, atWorkCounter(zone, camera.position)) : { visible: false };
+      const atCounter = station && atWorkCounter(zone, camera.position);
+      const customer = atCounter ? characters.waitingCustomer(zone) : null;
+      locations.job = atCounter && !customer ? project(station, true) : { visible: false };
+      locations.customer = customer ? { ...project(customer.point, true), guest: customer.guest } : { visible: false };
       const stop = transit.aboard ? null : nearbyStop(camera.position);
       locations.transport = stop ? project(bus.stopPositions[stop], true) : { visible: false };
       for (const [id, position, close] of characters.nearby(camera.position, zone)) locations[id] = project(position, close);

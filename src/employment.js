@@ -15,9 +15,21 @@ const orders = [
   { offset: 218, guest: 'eva', units: 2 },
   { offset: 367, guest: 'tomas', units: 1 },
 ];
-const entryMinutes = 4;
+const entryMinutes = 12;
 const patienceMinutes = 48;
 const crossing = 4.8;
+
+export function customerRoute(occupation, guest) {
+  const { x, z, depth } = workplaces[occupation];
+  const door = z - depth / 2;
+  return [
+    { x: guest === 'eva' ? 13.1 : 22.1, z: crossing },
+    { x, z: crossing },
+    { x, z: door },
+    { x, z: door + 0.65 },
+    { x: x - 0.39, z: z - 0.22 },
+  ];
+}
 
 export function createEmployment(occupation, earned = 0, day = 1) {
   const nextPayday = day - (day - 1) % payInterval + payInterval;

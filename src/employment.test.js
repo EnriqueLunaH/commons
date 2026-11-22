@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createLife, closeMonth, dailyWage, monthlyStatement, restoreLife, settlePayroll } from './economy.js';
 import { rememberedShift } from './residents.js';
 import {
-  atWorkCounter, clockIn, employmentStatus, nextCommutePoint, sellToCustomer, shopCustomer,
-  stockShop, trackShift, visitHome, workplaces,
+  atWorkCounter, clockIn, customerRoute, employmentStatus, nextCommutePoint, sellToCustomer, shopCustomer,
+  stockShop, trackShift, visitHome, workplaceAt, workplaces,
 } from './employment.js';
 
 const morning = { night: false, minute: 480 };
@@ -60,18 +60,33 @@ test('a customer walks in, buys prepared stock exactly once, then leaves with th
   const atWork = atWorkCounter(job.occupation, workplaces.florist);
   assert.equal(shopCustomer(job, 2, local(483)).phase, 'entering');
   assert.equal(sellToCustomer(job, 2, local(483), atWork, price), job);
-  assert.equal(sellToCustomer(job, 2, local(487), atWork, price), job);
-  job = stockShop(job, 2, local(487), atWork);
-  assert.equal(sellToCustomer(job, 2, local(488), false, price), job);
-  job = sellToCustomer(job, 2, local(488), atWork, price);
+  assert.equal(shopCustomer(job, 2, local(493)).phase, 'entering');
+  assert.equal(sellToCustomer(job, 2, local(494), atWork, price), job);
+  job = stockShop(job, 2, local(494), atWork);
+  assert.equal(sellToCustomer(job, 2, local(495), false, price), job);
+  job = sellToCustomer(job, 2, local(495), atWork, price);
   assert.equal(job.shift.stock, 3);
   assert.equal(job.shift.sold, 1);
   assert.equal(job.shift.revenue, price);
-  assert.equal(shopCustomer(job, 2, local(489)).bought, true);
-  assert.equal(shopCustomer(job, 2, local(489)).phase, 'leaving');
-  assert.equal(sellToCustomer(job, 2, local(489), atWork, price), job);
-  assert.equal(shopCustomer(job, 2, local(492)), null);
+  assert.equal(shopCustomer(job, 2, local(496)).bought, true);
+  assert.equal(shopCustomer(job, 2, local(496)).phase, 'leaving');
+  assert.equal(sellToCustomer(job, 2, local(496), atWork, price), job);
+  assert.equal(shopCustomer(job, 2, local(507)), null);
   assert.deepEqual(restoreLife(JSON.stringify({ ...life, employment: job })).employment, job);
+});
+
+test('both customers start outdoors and enter either shop through the door before reaching the counter', () => {
+  for (const [occupation, { x, z, depth }] of Object.entries(workplaces)) {
+    const eva = customerRoute(occupation, 'eva');
+    const tomas = customerRoute(occupation, 'tomas');
+    assert.notDeepEqual(eva[0], tomas[0]);
+    for (const route of [eva, tomas]) {
+      assert.equal(workplaceAt(route[0]), undefined);
+      assert.deepEqual(route[2], { x, z: z - depth / 2 });
+      assert.equal(workplaceAt(route[3]), occupation);
+      assert.equal(atWorkCounter(occupation, route.at(-1)), true);
+    }
+  }
 });
 
 test('closing accrues only time worked and payroll pays once after five days', () => {
