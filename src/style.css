@@ -248,6 +248,7 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .action-icon { color: var(--gold); font: 1.25rem/1 var(--serif); }
 .keyboard-hint { margin: 0.52rem 0 0; color: #efddc3; font-size: 0.72rem; text-align: center; }
 .touch-move { display: none; }
+.in-transit .touch-move { display: none; }
 .render-error { position: absolute; top: 32%; left: 1rem; right: 1rem; text-align: center; }
 
 .sheet {
@@ -342,11 +343,20 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .map-market { --district: #be8970; }
 .map-parks { --district: #8f9b71; }
 .map-commute { --district: #a56842; }
+.map-transit { --district: #627e7c; }
 .map-actions { margin-block: 0.8rem; }
 .map-destinations { border: 0; margin: 0; padding: 0; }
 .map-destinations legend { margin-bottom: 0.45rem; padding: 0; color: #574c39; font-size: 0.82rem; }
 .employment-line { color: #f2dbb8; }
 .job-pay-note { font-size: 0.88rem; color: #5d503d; }
+.bus-line { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1.05rem; }
+.bus-line span { flex: 1; height: 2px; background: #637b71; position: relative; }
+.bus-line span::before, .bus-line span::after {
+  content: ""; position: absolute; width: 8px; height: 8px; top: -3px; border-radius: 50%; background: #637b71;
+}
+.bus-line span::before { left: 0; }
+.bus-line span::after { right: 0; }
+.sheet .spoken-line { font: 1.2rem/1.45 var(--serif); }
 .primary, .secondary {
   display: inline-flex;
   justify-content: center;

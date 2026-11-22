@@ -6,6 +6,9 @@ import { buildCity } from './city.js';
 import { cityLimits } from './city-layout.js';
 import { atWorkCounter } from './employment.js';
 import { buildWorkplaces } from './workplaces.js';
+import { buildBus } from './bus.js';
+import { buildCharacters } from './characters.js';
+import { advanceBus, boardBus, createTransit, leaveBus, nearbyStop, readTransit, stops } from './transit.js';
 
 const colors = {
   cream: 0xe5d4b6, wall: 0xc8ae8d, trim: 0x907756, wood: 0xb1845d,
@@ -154,6 +157,8 @@ export function createRoom(canvas, onAnchors) {
   const { obstacles, lantern, streetLight, ripples } =
     buildNeighborhood({ scene, box, cylinder, oval, object, colors: C });
   const workplaces = buildWorkplaces({ scene, box, cylinder, oval, object, colors: C });
+  const bus = buildBus({ scene, box, cylinder, oval, object, colors: C });
+  const characters = buildCharacters({ scene, box, oval, colors: C });
 
   const rug = box(3.53, 0.033, 2.78, -1.34, 0.028, 0.02, 0xa97558, 0.045);
   rug.castShadow = false;
@@ -320,6 +325,8 @@ export function createRoom(canvas, onAnchors) {
   let eyeHeight = 1.65;
   let dimensions = { width: 1, height: 1 };
   let previous = performance.now();
+  let transit = createTransit();
+  let busHeading = 0;
   const walk = createWalk([
     [-5.43, -5.19, -5.06, 5.15], [-5.42, 5.42, 4.92, 5.16],
     [-5.42, 5.42, -4.94, -4.70],
@@ -333,6 +340,7 @@ export function createRoom(canvas, onAnchors) {
     ...obstacles,
     ...city.obstacles,
     ...workplaces.obstacles,
+    ...bus.obstacles,
   ], cityLimits);
 
   function goalAt(point) {
@@ -343,11 +351,12 @@ export function createRoom(canvas, onAnchors) {
     lookPitch = Math.atan2(dy, Math.hypot(dx, dz));
   }
 
-  function spawn(moment, active = true, savedPosition) {
+  function spawn(moment, active = true, savedPosition, savedTransit) {
     playing = active;
     target = null;
     keys.clear();
     walk.stop();
+    transit = createTransit(savedTransit);
     meal.visible = moment !== 'dawn';
     bread.visible = moment === 'breakfast';
     stew.visible = moment === 'dinner';
@@ -372,6 +381,15 @@ export function createRoom(canvas, onAnchors) {
     eyeHeight = camera.position.y;
     yaw = lookYaw;
     pitch = lookPitch;
+    const service = readTransit(transit);
+    busHeading = service.heading;
+    bus.place(service.x, service.z, busHeading);
+    if (transit.aboard) {
+      bus.sit(camera.position);
+      yaw = lookYaw = busHeading;
+      pitch = lookPitch = -0.04;
+      eyeHeight = camera.position.y;
+    }
   }
 
   function resize() {
@@ -384,10 +402,39 @@ export function createRoom(canvas, onAnchors) {
     renderer.setSize(width, height, false);
   }
 
+  function disembark(stop) {
+    const { x, z } = stops[stop].platform;
+    camera.position.set(x, 1.65, z);
+    yaw = lookYaw = stop === 'shops' ? Math.PI : Math.PI / 2;
+    pitch = lookPitch = 0;
+    eyeHeight = 1.65;
+    target = null;
+    keys.clear();
+    walk.stop();
+  }
+
   function frame(now) {
-    const elapsed = Math.min(0.045, (now - previous) / 1000);
+    const wallTime = Math.max(0, now - previous);
+    const elapsed = Math.min(0.045, wallTime / 1000);
     previous = now;
     if (playing) {
+      if (!document.hidden) {
+        const ride = advanceBus(transit, wallTime);
+        transit = ride.transit;
+        if (ride.dropoff) disembark(ride.dropoff);
+      }
+      const service = readTransit(transit);
+      const turn = Math.atan2(Math.sin(service.heading - busHeading), Math.cos(service.heading - busHeading));
+      const rotation = turn * (1 - Math.exp(-elapsed * 8));
+      busHeading += rotation;
+      bus.place(service.x, service.z, busHeading);
+      if (transit.aboard) {
+        bus.sit(camera.position);
+        eyeHeight = camera.position.y;
+        yaw += rotation;
+        lookYaw += rotation;
+      }
+
       const forward = Number(keys.has('w')) - Number(keys.has('s'));
       const right = Number(keys.has('d')) - Number(keys.has('a'));
       const rotate = Number(keys.has('arrowleft')) - Number(keys.has('arrowright'));
@@ -397,11 +444,11 @@ export function createRoom(canvas, onAnchors) {
         lookYaw += rotate * elapsed * 1.1;
         lookPitch = THREE.MathUtils.clamp(lookPitch + tilt * elapsed, -0.75, 0.62);
       }
-      if (forward || right) {
+      if (!transit.aboard && (forward || right)) {
         eyeHeight = 1.65;
         target = null;
       }
-      walk.step(camera.position, yaw, elapsed, forward, right);
+      if (!transit.aboard) walk.step(camera.position, yaw, elapsed, forward, right);
     }
     if (target) goalAt(target);
     camera.position.y = reducedMotion.matches ? eyeHeight : THREE.MathUtils.damp(camera.position.y, eyeHeight, 7, elapsed);
@@ -415,9 +462,10 @@ export function createRoom(canvas, onAnchors) {
       });
     }
     city.update(camera.position);
+    characters.update(now, reducedMotion.matches, camera.position);
     renderer.render(scene, camera);
     if (playing) {
-      const zone = neighborhoodZone(camera.position);
+      const zone = transit.aboard ? 'bus' : neighborhoodZone(camera.position);
       function project(point, areaVisible) {
         projection.set(...point).project(camera);
         const x = (projection.x + 1) * dimensions.width / 2;
@@ -431,6 +479,9 @@ export function createRoom(canvas, onAnchors) {
         .map(([id, point]) => [id, project(point, zone === 'home')]));
       const station = workplaces.anchors[zone];
       locations.job = station ? project(station, atWorkCounter(zone, camera.position)) : { visible: false };
+      const stop = transit.aboard ? null : nearbyStop(camera.position);
+      locations.transport = stop ? project(bus.stopPositions[stop], true) : { visible: false };
+      for (const [id, position, close] of characters.nearby(camera.position, zone)) locations[id] = project(position, close);
       onAnchors(locations, dimensions, zone);
     }
   }
@@ -451,6 +502,7 @@ export function createRoom(canvas, onAnchors) {
     canvas.addEventListener(event, () => { drag = null; });
   }
   new ResizeObserver(resize).observe(holder);
+  document.addEventListener('visibilitychange', () => { previous = performance.now(); });
   resize();
   spawn('breakfast', false);
   setTime(438);
@@ -461,7 +513,27 @@ export function createRoom(canvas, onAnchors) {
     position() {
       return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw, pitch };
     },
-    zone() { return neighborhoodZone(camera.position); },
+    zone() { return transit.aboard ? 'bus' : neighborhoodZone(camera.position); },
+    transit() { return transit; },
+    localizeTransit(labels) { bus.localize(labels); },
+    talk(id) { characters.talk(id); },
+    board() {
+      const ride = boardBus(transit, camera.position);
+      if (ride === transit) return false;
+      transit = ride;
+      keys.clear();
+      walk.stop();
+      target = null;
+      bus.sit(camera.position);
+      yaw = lookYaw = busHeading;
+      pitch = lookPitch = -0.045;
+      return true;
+    },
+    leaveBus() {
+      const ride = leaveBus(transit);
+      transit = ride.transit;
+      if (ride.dropoff) disembark(ride.dropoff);
+    },
     localizeWorkplaces(labels) { workplaces.localize(labels); },
     showWorkGoods(occupation) { workplaces.prepared(occupation); },
     focus(id) {

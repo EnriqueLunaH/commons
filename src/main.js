@@ -8,7 +8,9 @@ import { createSoundscape } from './sound.js';
 import { advanceClock, createClock, readClock, startSleep } from './clock.js';
 import { drawCityMap } from './city-map.js';
 import { destinations } from './city-layout.js';
-import { advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome } from './employment.js';
+import { advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome, workplaces } from './employment.js';
+import { nearbyStop, readTransit, stops, waitForStop } from './transit.js';
+import { rememberedShift, residentIds, residents } from './residents.js';
 
 const storageKey = 'commons.life.v1';
 const app = document.querySelector('#app');
@@ -16,7 +18,7 @@ const sound = createSoundscape();
 const actionIcons = { budget: '≡', savings: '◈', debt: '▤', work: '✦', diary: '✎' };
 const actions = Object.keys(actionIcons);
 const roomActions = [...actions, 'sleep'];
-const markedActions = [...roomActions, 'job'];
+const markedActions = [...roomActions, 'job', 'transport', ...residentIds];
 const controlledKeys = ['w', 'a', 's', 'd', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'];
 const preferredLocale = navigator.language.toLowerCase().startsWith('es') ? 'es-MX' : 'en-US';
 
@@ -41,6 +43,7 @@ let selectedPrice = 14;
 let focusedAction = null;
 let zone = 'home';
 let panel = null;
+let spoken = '';
 let wholeCity = false;
 let soundOn = false;
 let room;
@@ -59,6 +62,7 @@ app.innerHTML = `
             <button type="button" class="tool" id="route" hidden></button>
             <button type="button" class="tool" id="bed" hidden></button>
             <button type="button" class="tool" id="job"></button>
+            <button type="button" class="tool" id="transport" hidden></button>
             <button type="button" class="tool" id="map" hidden></button>
             <button type="button" class="tool" id="sound"></button>
             <button type="button" class="tool" id="help"></button>
@@ -191,10 +195,11 @@ function enter() {
   welcome.hidden = true;
   get('play').hidden = false;
   app.classList.add('in-life');
-  room?.spawn(life.moment, true, life.position);
+  room?.spawn(life.moment, true, life.position, life.transit);
   if (room) {
     zone = room.zone();
     room.localizeWorkplaces(language.employment.sites);
+    room.localizeTransit(language.transit.stops);
   }
   if (room || !life.position) registerHome();
   room?.setTime(readClock(clock).minute);
@@ -203,6 +208,7 @@ function enter() {
   get('help').textContent = language.help;
   get('map').textContent = language.map;
   get('job').textContent = language.employment.title;
+  get('transport').textContent = language.transit.title;
   get('bed').textContent = language.sleep;
   get('render-error').textContent = language.webgl;
   get('close').setAttribute('aria-label', language.close);
@@ -213,9 +219,11 @@ function enter() {
       <span>${language.actions[action]}</span>
     </button>`).join('');
   for (const action of markedActions) {
-    const label = action === 'job' ? language.employment.title : language.actions[action] ?? language[action];
+    const label = action === 'job' ? language.employment.title : action === 'transport' ? language.transit.title
+      : residents[action]?.name ?? language.actions[action] ?? language[action];
     markerElements[action].textContent = label;
-    markerElements[action].setAttribute('aria-label', language.interact + ' · ' + label);
+    const verb = residents[action] ? language.residents.talk : language.interact;
+    markerElements[action].setAttribute('aria-label', verb + ' · ' + label);
   }
   get('move').innerHTML = Object.entries({
     w: [language.move.forward, '↑'], a: [language.move.left, '←'],
@@ -241,7 +249,7 @@ const atAssignedCounter = () => atWorkCounter(life.employment.occupation, room?.
 const shouldHeadHome = (status) => ['returning', 'startHome', 'closed'].includes(status);
 
 function guideCommute() {
-  if (!room) return;
+  if (!room || room.transit().aboard) return;
   const status = currentShift();
   const goingHome = shouldHeadHome(status);
   if (status === 'finished' || (goingHome && zone === 'home') || (!goingHome && atAssignedCounter())) return;
@@ -283,6 +291,7 @@ function tickClock() {
     persist();
   } else if (previousShift !== currentShift()) renderEmployment();
   if (panel === 'job' && (previous.day !== clock.day || previousShift !== currentShift())) showPanel('job', false);
+  if (panel === 'transport') renderTransit();
   room?.setTime(after.minute);
   if (Math.floor(before.minute) !== Math.floor(after.minute)
     || Math.ceil(previous.rest / 1_000) !== Math.ceil(clock.rest / 1_000)) renderClock();
@@ -307,6 +316,9 @@ function updateHud() {
   get('pockets').innerHTML = ['cash', 'savings', 'debt'].map((key) => `
     <div><span>${language[key]}</span><strong>${money(life[key])}</strong></div>`).join('');
   get('route').textContent = zone === 'home' ? language.exit : language.returnHome;
+  get('route').hidden = !room || zone === 'bus';
+  app.classList.toggle('in-transit', zone === 'bus');
+  get('hint').textContent = zone === 'bus' ? language.transit.hint : language.hint;
   renderClock();
   renderEmployment();
   room?.funded(projectFunding(life) >= projectGoal(life));
@@ -316,7 +328,9 @@ function persist() {
   if (!life || !clock) return;
   lastSave = performance.now();
   try {
-    localStorage.setItem(storageKey, JSON.stringify({ ...life, clock, position: room?.position() ?? life.position }));
+    localStorage.setItem(storageKey, JSON.stringify({
+      ...life, clock, position: room?.position() ?? life.position, transit: room?.transit() ?? life.transit,
+    }));
   } catch {
     // The current session remains playable when storage is unavailable.
   }
@@ -408,6 +422,7 @@ function cityMapPanel() {
       <span class="map-market">${language.zones.market}</span>
       <span class="map-parks">${language.mapParks}</span>
       <span class="map-commute">${language.employment.mapRoute}</span>
+      <span class="map-transit">${language.transit.mapLine}</span>
     </div>
     <div class="button-row map-actions">
       ${button('map-scale', wholeCity ? language.mapNearby : language.mapOverview, false, true)}
@@ -442,15 +457,89 @@ function jobPanel() {
     </div>`;
 }
 
+function nearestStop() {
+  const { x, z } = room.position();
+  const distance = (stop) => Math.hypot(x - stop.platform.x, z - stop.platform.z);
+  return distance(stops.neighborhood) <= distance(stops.shops) ? 'neighborhood' : 'shops';
+}
+
+function transitPanel() {
+  const bus = language.transit;
+  return `<div class="bus-line"><strong>${bus.stops.neighborhood}</strong><span aria-hidden="true"></span><strong>${bus.stops.shops}</strong></div>
+    <p id="bus-status" role="status"></p><div class="button-row">
+      ${button('board-bus', bus.board)}
+      ${button('leave-bus', bus.request)}
+      ${button('guide-bus', bus.guide, false, true)}
+    </div>`;
+}
+
+function renderTransit() {
+  const bus = language.transit;
+  const service = room.transit();
+  const { stop, next } = readTransit(service);
+  const nearby = nearbyStop(room.position());
+  const board = content.querySelector('[data-action="board-bus"]');
+  const leave = content.querySelector('[data-action="leave-bus"]');
+  const guide = content.querySelector('[data-action="guide-bus"]');
+  let text;
+  if (service.aboard) {
+    text = service.requested ? bus.requested(bus.stops[next])
+      : stop ? bus.arrived(bus.stops[stop]) : bus.riding(bus.stops[next]);
+  } else if (nearby) {
+    const wait = waitForStop(service, nearby);
+    text = wait ? bus.waiting(bus.stops[nearby], Math.ceil(wait / 1_000)) : bus.ready(bus.stops[nearby]);
+  } else {
+    text = bus.needStop(bus.stops[nearestStop()]);
+  }
+  const status = get('bus-status');
+  if (status.textContent !== text) status.textContent = text;
+  board.hidden = service.aboard || !nearby;
+  board.disabled = stop !== nearby;
+  leave.hidden = !service.aboard;
+  leave.disabled = service.requested;
+  leave.textContent = stop ? bus.alight : bus.request;
+  guide.hidden = service.aboard || Boolean(nearby);
+}
+
+function residentPanel(id) {
+  const dialogue = language.residents;
+  return `<p class="spoken-line">${spoken || dialogue.greetings[id]}</p><div class="button-row">
+    ${id === 'ines' ? button('share-shift', dialogue.share, false, true) : ''}
+    ${id === 'ines' || id === 'nico' ? button('remember-shift', dialogue.ask, false, true) : ''}
+  </div>`;
+}
+
+function tellResident(action) {
+  const dialogue = language.residents;
+  const sites = language.employment.sites;
+  if (action === 'share-shift' && panel === 'ines') {
+    const memory = rememberedShift(life.employment);
+    spoken = memory ? dialogue.thanks(sites[memory.occupation]) : dialogue.noShift;
+    if (memory) life = { ...life, rememberedWork: memory };
+  } else if (action === 'remember-shift') {
+    const memory = life.rememberedWork;
+    spoken = panel === 'nico' ? dialogue.joke
+      : Number.isSafeInteger(memory?.day) && Object.hasOwn(sites, memory.occupation)
+        ? dialogue.memory(sites[memory.occupation], memory.day) : dialogue.emptyMemory;
+  }
+}
+
 function showPanel(id, focusView = true) {
-  if (!life || (clock.rest && id !== 'sleeping') || (id === 'sleep' && !canSleep())) return;
+  if (!life || (clock.rest && id !== 'sleeping') || (id === 'sleep' && !canSleep())
+    || (id === 'transport' && !room)) return;
+  const resident = residents[id];
+  if (resident && focusView && markerElements[id].hidden) return;
+  if (id !== panel) spoken = '';
   panel = id;
   room?.stop();
+  room?.talk(resident ? id : null);
   if (focusView && zone === 'home' && roomActions.includes(id)) room?.focus(id);
   sheet.classList.toggle('sleeping', id === 'sleeping');
-  get('sheet-title').textContent = id === 'map' ? language.mapTitle
+  get('sheet-title').textContent = resident ? resident.name : id === 'transport' ? language.transit.title
+    : id === 'map' ? language.mapTitle
     : id === 'job' ? language.employment.title : language.actions[id] ?? language[id];
-  get('sheet-subtitle').textContent = id === 'job' ? language.employment.day + ' ' + clock.day
+  get('sheet-subtitle').textContent = resident ? language.residents.roles[id] : id === 'transport' ? language.transit.line
+    : id === 'job' ? language.employment.day + ' ' + clock.day
     : id === 'map' ? '' : id === 'sleep' || id === 'sleeping' ? language.night
     : language.subtitles[id] ?? (language.month + ' ' + (life.lastReceipt?.month ?? life.month));
 
@@ -472,6 +561,7 @@ function showPanel(id, focusView = true) {
     work: works,
     job: jobPanel,
     map: cityMapPanel,
+    transport: transitPanel,
     diary: () => {
       const mood = receipt ? currentThought() : language.journal;
       return `<blockquote>“${language.trying(life.yearsTrying)}”</blockquote><p>${mood}</p>`;
@@ -481,8 +571,9 @@ function showPanel(id, focusView = true) {
     sleep: () => `<p>${language.sleepNote}</p>${button('sleep', language.sleep)}`,
     sleeping: () => `<p id="sleep-remaining" role="status">${language.seconds(Math.ceil(clock.rest / 1_000))}</p>`,
   };
-  content.innerHTML = panels[id]();
+  content.innerHTML = resident ? residentPanel(id) : panels[id]();
   if (id === 'map') drawCityMap(get('city-plan'), room.position(), language, wholeCity, life.employment.occupation);
+  if (id === 'transport') renderTransit();
   content.scrollTop = 0;
   if (!sheet.open) sheet.showModal();
 }
@@ -510,6 +601,30 @@ function gameAction(action) {
     case 'job-map':
       showPanel('map', false);
       return;
+    case 'board-bus':
+      if (room.board()) {
+        persist();
+        sheet.close();
+      } else renderTransit();
+      return;
+    case 'leave-bus':
+      room.leaveBus();
+      persist();
+      if (room.transit().aboard) renderTransit();
+      else sheet.close();
+      return;
+    case 'guide-bus':
+      sheet.close();
+      if (zone === 'home') room.focus('door');
+      else if (workplaces[zone]) {
+        const { x, z, depth } = workplaces[zone];
+        room.lookToward({ x, z: z - depth / 2 - 0.7 });
+      } else room.lookToward(stops[nearestStop()].platform);
+      return;
+    case 'share-shift':
+    case 'remember-shift':
+      tellResident(action);
+      break;
     case 'map-scale':
       wholeCity = !wholeCity;
       showPanel('map', false);
@@ -551,6 +666,7 @@ get('help').addEventListener('click', () => showPanel('help'));
 get('route').addEventListener('click', () => room?.focus('door'));
 get('bed').addEventListener('click', () => showPanel('sleep'));
 get('job').addEventListener('click', () => showPanel('job'));
+get('transport').addEventListener('click', () => showPanel('transport'));
 get('map').addEventListener('click', () => showPanel('map'));
 get('sound').addEventListener('click', async () => {
   get('sound').disabled = true;
@@ -562,6 +678,7 @@ get('close').addEventListener('click', () => { if (!clock?.rest) sheet.close(); 
 sheet.addEventListener('cancel', (event) => { if (clock?.rest) event.preventDefault(); });
 sheet.addEventListener('close', () => {
   panel = null;
+  room?.talk(null);
   sheet.classList.remove('sleeping');
 });
 content.addEventListener('click', (event) => {
@@ -591,6 +708,8 @@ window.addEventListener('keydown', (event) => {
     showPanel('map');
   } else if (key === 'g' && !event.repeat) {
     guideCommute();
+  } else if (key === 'b' && room && !event.repeat) {
+    showPanel('transport');
   } else if (controlledKeys.includes(key)) {
     event.preventDefault();
     room?.key(key, true);
@@ -637,10 +756,12 @@ import('./room.js').then(({ createRoom }) => {
   room = createRoom(scene, paintMarkers);
   get('route').hidden = false;
   get('map').hidden = false;
+  get('transport').hidden = false;
   if (life) {
-    room.spawn(life.moment, true, life.position);
+    room.spawn(life.moment, true, life.position, life.transit);
     zone = room.zone();
     room.localizeWorkplaces(language.employment.sites);
+    room.localizeTransit(language.transit.stops);
     if (registerHome()) persist();
     room.setTime(readClock(clock).minute);
     updateHud();

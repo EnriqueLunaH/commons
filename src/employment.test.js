@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLife, closeMonth, dailyWage, monthlyStatement, restoreLife } from './economy.js';
+import { rememberedShift } from './residents.js';
 import {
   advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome, workplaces,
 } from './employment.js';
@@ -66,4 +67,13 @@ test('the commute follows the corners from the original house to either shop in 
     assert.deepEqual(nextCommutePoint(occupation, { x, z }, true), { x, z: 4.8 });
     assert.deepEqual(nextCommutePoint(occupation, { x: 9, z: 4.8 }, true), { x: 9, z: 1.45 });
   }
+});
+
+test('Inés can remember a completed shift after the saved conversation is reloaded', () => {
+  const life = createLife('en-US', () => 0);
+  assert.equal(rememberedShift(life.employment), null);
+  const completed = { ...life.employment, shiftDay: 2, stage: 'finished' };
+  const rememberedWork = rememberedShift(completed);
+  const saved = { ...life, employment: completed, rememberedWork };
+  assert.deepEqual(restoreLife(JSON.stringify(saved)).rememberedWork, { day: 2, occupation: 'bakery' });
 });

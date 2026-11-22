@@ -1,5 +1,6 @@
 import { blockSize, cityBlocks, cityLimits, destinations } from './city-layout.js';
 import { commuteRoute, workplaces } from './employment.js';
+import { busRoute, stops } from './transit.js';
 
 const districtTones = {
   street: '#dfceb1',
@@ -62,6 +63,16 @@ export function drawCityMap(canvas, position, language, wholeCity, occupation) {
   }
 
   if (!wholeCity) {
+    ctx.beginPath();
+    ctx.moveTo(mapX(busRoute[0].x), mapY(busRoute[0].z));
+    for (const { x, z } of busRoute.slice(1)) ctx.lineTo(mapX(x), mapY(z));
+    ctx.strokeStyle = '#627e7c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    for (const { platform } of Object.values(stops)) {
+      ctx.fillStyle = '#627e7c';
+      ctx.fillRect(mapX(platform.x) - 3, mapY(platform.z) - 3, 6, 6);
+    }
     const route = commuteRoute(occupation);
     ctx.beginPath();
     ctx.moveTo(mapX(route[0].x), mapY(route[0].z));
