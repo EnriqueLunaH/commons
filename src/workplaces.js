@@ -123,8 +123,11 @@ export function buildWorkplaces({ scene, box, cylinder, oval, object, colors: C 
       for (const side of [-1, 1]) {
         flowers(x + side * 1.82, 0, front - 0.32, side > 0 ? 0xd6a676 : 0xb7859c, scene, 1.38);
       }
-      flowers(x - 0.30, 0.907, counterZ + 0.04, 0xd2909c, finishedGoods, 1.12);
-      flowers(x + 0.24, 0.907, counterZ - 0.05, 0xd9a46d, finishedGoods, 0.91);
+      for (const [offset, tone] of [[-0.79, 0xd2909c], [-0.31, 0xd9a46d], [0.24, 0xe2afb3], [0.70, 0xce8b80]]) {
+        const bouquet = new THREE.Group();
+        finishedGoods.add(bouquet);
+        flowers(x + offset, 0.907, counterZ + 0.02, tone, bouquet, 0.91);
+      }
     }
 
     anchors[name] = [x, 1.10, counterZ - 0.42];
@@ -136,8 +139,11 @@ export function buildWorkplaces({ scene, box, cylinder, oval, object, colors: C 
     localize(labels) {
       for (const [name, sign] of Object.entries(signs)) sign(labels[name]);
     },
-    prepared(occupation) {
-      for (const [name, group] of Object.entries(goods)) group.visible = occupation === name;
+    stock(occupation, units) {
+      for (const [name, group] of Object.entries(goods)) {
+        group.visible = occupation === name && units > 0;
+        group.children.forEach((item, index) => { item.visible = index < units; });
+      }
     },
   };
 }

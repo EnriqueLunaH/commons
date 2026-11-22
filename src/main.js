@@ -2,15 +2,19 @@ import './style.css';
 import { copy } from './copy.js';
 import {
   regions, createLife, marketOffer, monthlyStatement, closeMonth, projectGoal, projectFunding,
-  basePrices, lotSizes, shiftPay, dailyWage, scheduleSale, scheduleWork, transfer, restoreLife, payBusFare,
+  basePrices, lotSizes, shiftPay, dailyWage, scheduleSale, scheduleWork, transfer, restoreLife, payBusFare, settlePayroll,
 } from './economy.js';
 import { createSoundscape } from './sound.js';
 import { advanceClock, createClock, readClock, startSleep } from './clock.js';
 import { drawCityMap } from './city-map.js';
 import { destinations } from './city-layout.js';
-import { advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome, workplaces } from './employment.js';
+import {
+  atWorkCounter, clockIn, employmentStatus, nextCommutePoint, sellToCustomer, shiftLength,
+  shopCapacity, shopCustomer, stockShop, trackShift, visitHome, workplaces,
+} from './employment.js';
 import { nearbyStop, readTransit, stops, waitForStop } from './transit.js';
-import { rememberedShift, residentIds, residents } from './residents.js';
+import { customers, rememberedShift, residentIds, residents } from './residents.js';
+import { bindReflection, reflectionMarkup } from './reflection.js';
 
 const storageKey = 'commons.life.v1';
 const app = document.querySelector('#app');
@@ -49,6 +53,7 @@ let spoken = '';
 let wholeCity = false;
 let soundOn = false;
 let room;
+let closeReflection;
 
 app.innerHTML = `
   <main class="world">
@@ -213,6 +218,24 @@ function updateThought() {
   get('arrival').textContent = '“' + (language.outsideThought[zone] ?? currentThought()) + '”';
 }
 
+function innerContext() {
+  const { locale, gender, cash, savings, debt, lastReceipt, lastPayroll, employment } = life;
+  return {
+    locale, gender, scene: language.zones[zone], day: clock.day, time: clockDuration(readClock(clock).minute),
+    currency: regions[locale].currency, cash, savings, debt,
+    job: language.employment.sites[employment.occupation], shift: currentShift(),
+    shiftSales: employment.shift?.sold ?? 0, wagesDue: employment.pendingPay,
+    lastPay: lastPayroll?.amount ?? 0, lastMonthMargin: lastReceipt?.margin ?? null,
+  };
+}
+
+function localReflection() {
+  if (life.lastPayroll?.day === clock.day) return language.voice.payday;
+  if (life.employment.shift?.sold && life.employment.shiftDay === clock.day) return language.voice.sale;
+  if (life.employment.stage === 'returning') return language.voice.home;
+  return zone === 'home' && !life.lastReceipt ? language.journal : language.outsideThought[zone] ?? currentThought();
+}
+
 function enter() {
   welcome.hidden = true;
   get('play').hidden = false;
@@ -274,6 +297,9 @@ function registerHome() {
 const currentShift = () => employmentStatus(life.employment, clock.day, readClock(clock));
 const atAssignedCounter = () => atWorkCounter(life.employment.occupation, room?.position());
 const shouldHeadHome = (status) => ['returning', 'startHome', 'closed'].includes(status);
+const unitPrice = () => workplaces[life.employment.occupation].price * regions[life.locale].scale;
+const clockDuration = (minutes) => String(Math.floor(minutes / 60)).padStart(2, '0')
+  + ':' + String(Math.floor(minutes % 60)).padStart(2, '0');
 
 function guideCommute() {
   if (!room || room.transit().aboard) return;
@@ -285,8 +311,18 @@ function guideCommute() {
 
 function renderEmployment() {
   get('job-status').textContent = language.employment.short[currentShift()];
-  const { occupation, shiftDay, stage } = life.employment;
-  room?.showWorkGoods(shiftDay === clock.day && ['prepared', 'returning', 'finished'].includes(stage) ? occupation : null);
+}
+
+function renderShop(time = readClock(clock)) {
+  const job = life.employment;
+  const active = job.stage === 'working' && job.shiftDay === clock.day;
+  const visit = shopCustomer(job, clock.day, time);
+  room?.showShop(job.occupation, active ? job.shift.stock : 0, visit);
+  if (active && panel === 'job' && get('shift-minutes')) {
+    const minutes = Math.floor(job.shift.minutes);
+    get('shift-minutes').textContent = clockDuration(minutes) + ' / 08:00';
+    get('shift-progress').value = minutes;
+  }
 }
 
 function canSleep() {
@@ -303,21 +339,42 @@ function renderClock() {
   if (remaining) remaining.textContent = language.seconds(Math.ceil(clock.rest / 1_000));
 }
 
-function tickClock() {
-  if (!clock || document.hidden) return;
+function tickClock(allowHidden = false) {
+  if (!clock || (document.hidden && !allowHidden)) return;
   const now = performance.now();
   const previous = clock;
   clock = advanceClock(clock, clockTick === null ? 0 : now - clockTick);
   clockTick = now;
   const before = readClock(previous);
   const after = readClock(clock);
-  const previousShift = employmentStatus(life.employment, previous.day, before);
-  if (previous.day !== clock.day) {
+  const job = life.employment;
+  const previousShift = employmentStatus(job, previous.day, before);
+  const previousVisit = shopCustomer(job, previous.day, before);
+  const newDay = previous.day !== clock.day;
+  if (job.stage === 'working' && (clock !== previous || newDay)) {
+    const minute = newDay || after.night ? 18 * 60 : after.minute;
+    const elapsed = before.night || previous.day !== job.shiftDay ? 0 : Math.max(0, minute - before.minute);
+    const employment = trackShift(job, newDay ? previous.day : clock.day, minute, elapsed,
+      room?.zone() === job.occupation, dailyWage(life));
+    if (employment !== job) life = { ...life, employment };
+  }
+  const beforePayroll = life;
+  life = settlePayroll(life, clock.day);
+  const newShift = currentShift();
+  const changed = previousShift !== newShift;
+  if (newDay || changed || beforePayroll !== life) {
     if (room) registerHome();
     updateHud();
     persist();
-  } else if (previousShift !== currentShift()) renderEmployment();
-  if (panel === 'job' && (previous.day !== clock.day || previousShift !== currentShift())) showPanel('job', false);
+    if (life.lastPayroll && beforePayroll.lastPayroll !== life.lastPayroll) {
+      get('arrival').textContent = '“' + language.voice.payday + '”';
+    }
+  }
+  const visit = shopCustomer(life.employment, clock.day, after);
+  if (panel === 'job' && (newDay || changed || previousVisit?.phase !== visit?.phase || previousVisit?.index !== visit?.index)) {
+    showPanel('job', false);
+  }
+  renderShop(after);
   if (panel === 'transport') renderTransit();
   room?.setTime(after.minute);
   if (Math.floor(before.minute) !== Math.floor(after.minute)
@@ -349,6 +406,7 @@ function updateHud() {
   get('hint').textContent = zone === 'bus' ? language.transit.hint : language.hint;
   renderClock();
   renderEmployment();
+  renderShop();
   room?.funded(projectFunding(life) >= projectGoal(life));
 }
 
@@ -394,6 +452,7 @@ function renderBudget() {
     ${figures([
       [budget.salary, money(life.income)],
       [language.income, money(receipt.income), true],
+      [language.employment.pending, money(life.employment.pendingPay)],
       ...(receipt.pendingIncome > receipt.income ? [[budget.extra, money(receipt.pendingIncome - receipt.income)]] : []),
     ])}
     <p class="budget-note">${budget.payday}</p>
@@ -500,23 +559,44 @@ function cityMapPanel() {
 function jobPanel() {
   const status = currentShift();
   const employment = language.employment;
-  const { occupation, earned } = life.employment;
+  const job = life.employment;
+  const { occupation, pendingPay, nextPayday, shift } = job;
   const onSite = atAssignedCounter();
-  const onDuty = ['commute', 'working', 'prepared'].includes(status);
-  const heading = onDuty && onSite ? employment.onSite[status] : employment.states[status];
-  const label = status === 'commute' ? employment.clockIn
-    : status === 'working' ? employment.tasks[occupation] : employment.finish;
+  const time = readClock(clock);
+  const customer = shopCustomer(job, clock.day, time);
+  const waiting = customer?.phase === 'waiting';
+  const heading = (onSite ? employment.onSite[status] : null) ?? employment.states[status];
   const goingHome = shouldHeadHome(status);
-  const guide = room && status !== 'finished' && (goingHome ? zone !== 'home' : !onSite);
+  const guide = room && zone !== 'bus' && status !== 'finished' && (goingHome ? zone !== 'home' : !onSite);
+  const price = unitPrice();
+  const shop = status === 'working' ? `
+    <div class="fund">
+      <div><strong id="shift-label">${employment.hours}</strong><span id="shift-minutes">${clockDuration(shift.minutes)} / 08:00</span></div>
+      <progress id="shift-progress" aria-labelledby="shift-label" max="${shiftLength}" value="${Math.floor(shift.minutes)}"></progress>
+      <small>${employment.attendance}</small>
+    </div>
+    ${figures([
+      [employment.stock, shift.stock + ' / ' + shopCapacity],
+      [employment.sold, shift.sold],
+      [employment.revenue, money(shift.revenue)],
+    ])}
+    <p class="notice" role="status">${customer ? employment.customer[customer.phase](
+      customers[customer.guest].name, customer.units, money(customer.units * price), customer.bought,
+    ) : employment.noCustomer}</p>` : '';
   return `<p>${heading}</p>
     ${figures([
       [employment.site, employment.sites[occupation]],
       [employment.wage, money(dailyWage(life))],
-      [employment.earned, money(earned), true],
+      [employment.pending, money(pendingPay), true],
+      [employment.nextPay, employment.day + ' ' + nextPayday],
+      ...(life.lastPayroll ? [[employment.lastPay, money(life.lastPayroll.amount)]] : []),
     ])}
     <p class="job-pay-note">${employment.payNote}</p>
+    ${shop}
     <div class="button-row">
-      ${onSite && onDuty ? button('advance-job', label) : ''}
+      ${onSite && status === 'commute' ? button('clock-in', employment.clockIn) : ''}
+      ${onSite && status === 'working' ? button('stock-shop', employment.tasks[occupation], shift.stock === shopCapacity) : ''}
+      ${onSite && waiting ? button('sell-customer', employment.sell + ' · ' + money(customer.units * price), shift.stock < customer.units) : ''}
       ${guide ? button('guide-job', goingHome ? employment.guideHome : employment.guide, false, true) : ''}
       ${room ? button('job-map', language.map, false, true) : ''}
     </div>`;
@@ -601,6 +681,8 @@ function showPanel(id, focusView = true) {
     || (id === 'transport' && !room)) return;
   const resident = residents[id];
   if (resident && focusView && markerElements[id].hidden) return;
+  closeReflection?.();
+  closeReflection = null;
   if (id !== panel) spoken = '';
   panel = id;
   room?.stop();
@@ -635,8 +717,8 @@ function showPanel(id, focusView = true) {
     map: cityMapPanel,
     transport: transitPanel,
     diary: () => {
-      const mood = receipt ? currentThought() : language.journal;
-      return `<blockquote>“${language.trying(life.yearsTrying)}”</blockquote><p>${mood}</p>`;
+      return `<blockquote>“${language.trying(life.yearsTrying)}”</blockquote><p>${localReflection()}</p>
+        ${reflectionMarkup(language.voice)}`;
     },
     receipt: () => `${statement(receipt, true)}${progress()}`,
     help: () => `<p>${language.controls}</p>`,
@@ -644,6 +726,9 @@ function showPanel(id, focusView = true) {
     sleeping: () => `<p id="sleep-remaining" role="status">${language.seconds(Math.ceil(clock.rest / 1_000))}</p>`,
   };
   content.innerHTML = resident ? residentPanel(id) : panels[id]();
+  if (id === 'diary') closeReflection = bindReflection(content, {
+    copy: language.voice, context: innerContext, fallback: localReflection,
+  });
   if (id === 'map') drawCityMap(get('city-plan'), room.position(), language, wholeCity, life.employment.occupation);
   if (id === 'transport') renderTransit();
   content.scrollTop = 0;
@@ -661,11 +746,18 @@ function gameAction(action) {
     case 'receipt':
       showPanel('receipt', false);
       return;
-    case 'advance-job':
+    case 'clock-in':
+    case 'stock-shop':
+    case 'sell-customer': {
       tickClock();
       if (panel !== 'job') return;
-      life = { ...life, employment: advanceShift(life.employment, clock.day, readClock(clock), atAssignedCounter(), dailyWage(life)) };
+      const args = [life.employment, clock.day, readClock(clock), atAssignedCounter()];
+      const employment = action === 'clock-in' ? clockIn(...args)
+        : action === 'stock-shop' ? stockShop(...args) : sellToCustomer(...args, unitPrice());
+      if (employment === life.employment) return;
+      life = { ...life, employment };
       break;
+    }
     case 'guide-job':
       sheet.close();
       guideCommute();
@@ -756,6 +848,8 @@ get('sound').addEventListener('click', async () => {
 get('close').addEventListener('click', () => { if (!clock?.rest) sheet.close(); });
 sheet.addEventListener('cancel', (event) => { if (clock?.rest) event.preventDefault(); });
 sheet.addEventListener('close', () => {
+  closeReflection?.();
+  closeReflection = null;
   panel = null;
   room?.talk(null);
   sheet.classList.remove('sleeping');
@@ -800,7 +894,7 @@ window.addEventListener('keyup', (event) => room?.key(event.key.toLowerCase(), f
 window.addEventListener('blur', () => room?.stop());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    if (clock && clockTick !== null) clock = advanceClock(clock, performance.now() - clockTick);
+    if (clockTick !== null) tickClock(true);
     room?.stop();
     if (room) registerHome();
     persist();
@@ -814,7 +908,7 @@ document.addEventListener('visibilitychange', () => {
     tickClock();
   }
 });
-window.addEventListener('pagehide', () => { tickClock(); persist(); });
+window.addEventListener('pagehide', () => { tickClock(true); persist(); });
 get('move').addEventListener('pointerdown', (event) => {
   const button = event.target.closest('[data-key]');
   if (!button) return;

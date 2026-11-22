@@ -535,7 +535,10 @@ export function createRoom(canvas, onAnchors) {
       if (ride.dropoff) disembark(ride.dropoff);
     },
     localizeWorkplaces(labels) { workplaces.localize(labels); },
-    showWorkGoods(occupation) { workplaces.prepared(occupation); },
+    showShop(occupation, units, visit) {
+      workplaces.stock(occupation, units);
+      characters.shopVisit(occupation, visit);
+    },
     focus(id) {
       target = id === 'door' ? doorway : landmarks[id] ?? null;
     },

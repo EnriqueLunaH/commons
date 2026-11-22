@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLife, closeMonth, dailyWage, monthlyStatement, restoreLife } from './economy.js';
+import { createLife, closeMonth, dailyWage, monthlyStatement, restoreLife, settlePayroll } from './economy.js';
 import { rememberedShift } from './residents.js';
 import {
-  advanceShift, atWorkCounter, employmentStatus, nextCommutePoint, visitHome, workplaces,
+  atWorkCounter, clockIn, employmentStatus, nextCommutePoint, sellToCustomer, shopCustomer,
+  stockShop, trackShift, visitHome, workplaces,
 } from './employment.js';
 
 const morning = { night: false, minute: 480 };
 const noon = { night: false, minute: 720 };
 
-test('one morning shift requires home and the assigned counter, then pays once and requires returning home', () => {
+test('clocking in requires home and the assigned counter, then eight hours of attendance', () => {
   const life = createLife('en-US', () => 0);
   const job = life.employment;
   assert.equal(job.occupation, 'bakery');
@@ -17,19 +18,21 @@ test('one morning shift requires home and the assigned counter, then pays once a
   assert.equal(atWorkCounter('bakery', workplaces.florist), false);
   assert.equal(atWorkCounter('bakery', workplaces.bakery), true);
   const wage = dailyWage(life);
-  assert.equal(advanceShift(job, 1, morning, true, wage), job);
+  assert.equal(clockIn(job, 1, morning, true), job);
   const leftHome = visitHome(job, 1);
-  assert.equal(advanceShift(leftHome, 1, noon, true, wage), leftHome);
-  assert.equal(advanceShift(leftHome, 1, morning, false, wage), leftHome);
+  assert.equal(clockIn(leftHome, 1, noon, true), leftHome);
+  assert.equal(clockIn(leftHome, 1, morning, false), leftHome);
 
-  const arrived = advanceShift(leftHome, 1, morning, true, wage);
+  const arrived = clockIn(leftHome, 1, morning, true);
   assert.equal(arrived.stage, 'working');
-  const prepared = advanceShift(arrived, 1, morning, true, wage);
-  assert.equal(prepared.stage, 'prepared');
-  const returning = advanceShift(prepared, 1, morning, true, wage);
+  assert.equal(trackShift(arrived, 1, 510, 30, false, wage), arrived);
+  const almost = trackShift(arrived, 1, 989, 479, true, wage);
+  assert.equal(almost.stage, 'working');
+  const returning = trackShift(almost, 1, 990, 1, true, wage);
   assert.equal(returning.earned - job.earned, wage);
-  assert.equal(advanceShift(returning, 1, morning, true, wage), returning);
-  assert.equal(advanceShift(returning, 2, morning, true, wage), returning);
+  assert.equal(returning.pendingPay, wage);
+  assert.equal(trackShift(returning, 1, 991, 1, true, wage), returning);
+  assert.equal(clockIn(returning, 2, morning, true), returning);
   const finished = visitHome(returning, 1);
   assert.equal(employmentStatus(finished, 1, morning), 'finished');
   assert.equal(employmentStatus(finished, 2, morning), 'startHome');
@@ -37,6 +40,7 @@ test('one morning shift requires home and the assigned counter, then pays once a
 
   const afterPayday = closeMonth({ ...life, employment: finished });
   assert.equal(afterPayday.lastReceipt.income, job.earned + wage);
+  assert.equal(afterPayday.employment.pendingPay, wage);
   assert.equal(monthlyStatement(afterPayday).income, 0);
   assert.equal(afterPayday.employment.stage, 'finished');
 });
@@ -48,15 +52,46 @@ test('old saves receive a stable occupation and keep their accrued income', () =
   assert.deepEqual(restoreLife(JSON.stringify(restored)), restored);
 });
 
-test('a florist clocks in at the flower shop and can finish the assigned shift', () => {
+test('a customer walks in, buys prepared stock exactly once, then leaves with the purchase', () => {
   const life = createLife('es-MX', () => 0.99);
-  const wage = dailyWage(life);
-  let job = visitHome(life.employment, 2);
+  const local = (minute) => ({ minute, night: false });
+  const price = 144;
+  let job = clockIn(visitHome(life.employment, 2), 2, morning, true);
   const atWork = atWorkCounter(job.occupation, workplaces.florist);
-  for (let action = 0; action < 3; action++) job = advanceShift(job, 2, morning, atWork, wage);
-  assert.equal(job.stage, 'returning');
-  assert.equal(job.earned, life.employment.earned + wage);
-  assert.equal(visitHome(job, 2).stage, 'finished');
+  assert.equal(shopCustomer(job, 2, local(483)).phase, 'entering');
+  assert.equal(sellToCustomer(job, 2, local(483), atWork, price), job);
+  assert.equal(sellToCustomer(job, 2, local(487), atWork, price), job);
+  job = stockShop(job, 2, local(487), atWork);
+  assert.equal(sellToCustomer(job, 2, local(488), false, price), job);
+  job = sellToCustomer(job, 2, local(488), atWork, price);
+  assert.equal(job.shift.stock, 3);
+  assert.equal(job.shift.sold, 1);
+  assert.equal(job.shift.revenue, price);
+  assert.equal(shopCustomer(job, 2, local(489)).bought, true);
+  assert.equal(shopCustomer(job, 2, local(489)).phase, 'leaving');
+  assert.equal(sellToCustomer(job, 2, local(489), atWork, price), job);
+  assert.equal(shopCustomer(job, 2, local(492)), null);
+  assert.deepEqual(restoreLife(JSON.stringify({ ...life, employment: job })).employment, job);
+});
+
+test('closing accrues only time worked and payroll pays once after five days', () => {
+  const life = createLife('en-US', () => 0);
+  const wage = dailyWage(life);
+  const started = clockIn(visitHome(life.employment, 5), 5, morning, true);
+  const part = trackShift(started, 5, 720, 240, true, wage);
+  const finished = trackShift(part, 5, 1080, 360, false, wage);
+  const worked = { ...life, employment: finished };
+  assert.equal(finished.stage, 'returning');
+  assert.equal(finished.pendingPay, Math.floor(wage / 2));
+  assert.equal(settlePayroll(worked, 5), worked);
+  const deposited = settlePayroll(worked, 6);
+  assert.equal(deposited.cash - worked.cash, Math.floor(wage / 2));
+  assert.equal(deposited.employment.nextPayday, 11);
+  assert.equal(deposited.employment.pendingPay, 0);
+  assert.equal(monthlyStatement(deposited).income, Math.floor(wage / 2));
+  assert.equal(settlePayroll(restoreLife(JSON.stringify(deposited)), 6).cash, deposited.cash);
+  assert.equal(closeMonth(deposited).cash, closeMonth(worked).cash);
+  assert.equal(closeMonth(deposited).lastReceipt.shortfall, closeMonth(worked).lastReceipt.shortfall - Math.floor(wage / 2));
 });
 
 test('the commute follows the corners from the original house to either shop in both directions', () => {

@@ -413,6 +413,30 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .map-destinations legend { margin-bottom: 0.45rem; padding: 0; color: #574c39; font-size: 0.82rem; }
 .employment-line { color: #f2dbb8; }
 .job-pay-note { font-size: 0.88rem; color: #5d503d; }
+.reflection {
+  display: grid;
+  gap: 0.6rem;
+  border-top: 1px solid #d8c7aa;
+  padding-top: 0.8rem;
+}
+.reflection h3, .reflection p { margin: 0; }
+.reflection label { font-size: 0.84rem; }
+.reflection textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 0.55rem 0.65rem;
+  color: var(--ink);
+  border: 1px solid #c9b497;
+  border-radius: 0.36rem;
+  background: #fffbef;
+  font: inherit;
+}
+.reflection-result {
+  padding: 0.54rem 0 0.54rem 0.78rem;
+  border-left: 2px solid #ab7962;
+  font: italic 1.12rem/1.42 var(--serif);
+}
+.reflection audio { width: 100%; height: 2.25rem; }
 .bus-line { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1.05rem; }
 .bus-line span { flex: 1; height: 2px; background: #637b71; position: relative; }
 .bus-line span::before, .bus-line span::after {

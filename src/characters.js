@@ -1,13 +1,16 @@
 import * as THREE from 'three';
-import { residents } from './residents.js';
+import { workplaces } from './employment.js';
+import { customers, residents } from './residents.js';
 
 const walkingPeriod = 7_800;
 
 export function buildCharacters({ scene, box, oval, colors: C }) {
   let talking = null;
-  const figures = Object.entries(residents).map(([id, person], index) => {
+  let visit = null;
+  const figures = Object.entries({ ...residents, ...customers }).map(([id, person], index) => {
     const group = new THREE.Group();
     scene.add(group);
+    const customer = Object.hasOwn(customers, id);
     const { skin, hair, coat, pants } = person;
     const arms = [];
     const feet = [];
@@ -21,7 +24,7 @@ export function buildCharacters({ scene, box, oval, colors: C }) {
       box(0.25, 0.115, 0.221, 0, 1.58, 0.01, C.white, 0.048, group);
       oval(0, 1.64, 0.012, 0.131, 0.078, 0.12, C.white, group);
     }
-    if (person.place !== 'outdoors') box(0.25, 0.26, 0.036, 0, 0.96, -0.124, C.paper, 0.016, group);
+    if (person.place && person.place !== 'outdoors') box(0.25, 0.26, 0.036, 0, 0.96, -0.124, C.paper, 0.016, group);
     for (const side of [-1, 1]) {
       oval(side * 0.041, 1.401, -0.113, 0.012, 0.014, 0.010, C.charcoal, group);
       const arm = new THREE.Group();
@@ -37,17 +40,54 @@ export function buildCharacters({ scene, box, oval, colors: C }) {
       box(0.151, 0.115, 0.255, 0, -0.766, -0.065, C.darkWood, 0.041, leg);
       feet.push(leg);
     }
+    const bag = customer ? box(0.15, 0.24, 0.13, -0.08, -0.38, -0.06, 0xc3a47d, 0.023, arms[0]) : null;
+    const bouquet = customer ? new THREE.Group() : null;
+    if (bouquet) {
+      arms[0].add(bouquet);
+      box(0.08, 0.19, 0.07, -0.08, -0.35, -0.06, C.green, 0.024, bouquet);
+      oval(-0.08, -0.20, -0.06, 0.09, 0.085, 0.085, 0xd591a4, bouquet);
+    }
     group.traverse((child) => { child.castShadow = false; });
-    const [start, end] = person.trail;
-    return { id, place: person.place, group, arms, feet, start, end, offset: index * 1_700 };
+    if (customer) group.visible = false;
+    return { id, place: person.place, group, arms, feet, trail: person.trail, offset: index * 1_700, bag, bouquet };
   });
 
+  function animateGait(figure, gait) {
+    for (let index = 0; index < 2; index++) {
+      const direction = index ? 1 : -1;
+      figure.arms[index].rotation.x = gait * direction;
+      figure.feet[index].rotation.x = -gait * direction;
+    }
+  }
+
   return {
+    shopVisit(occupation, customer) { visit = customer ? { ...customer, occupation } : null; },
     update(now, reduceMotion, viewer) {
-      for (const { id, group, arms, feet, start, end, offset } of figures) {
+      for (const figure of figures) {
+        const { id, group, trail, offset, bag, bouquet } = figure;
+        if (!trail) {
+          group.visible = visit?.guest === id;
+          if (!group.visible) continue;
+          const { x, z, depth } = workplaces[visit.occupation];
+          const entry = z - depth / 2;
+          const path = [[x + 1.45, entry - 1.3], [x, entry - 0.4], [x - 0.39, z - 0.22]];
+          const stage = Math.min(path.length - 2, Math.floor(visit.progress * (path.length - 1)));
+          const [start, end] = path.slice(stage, stage + 2);
+          const fraction = visit.progress * (path.length - 1) - stage;
+          group.position.set(THREE.MathUtils.lerp(start[0], end[0], fraction), 0,
+            THREE.MathUtils.lerp(start[1], end[1], fraction));
+          const direction = visit.phase === 'leaving' ? -1 : 1;
+          group.rotation.y = visit.phase === 'waiting' ? Math.PI
+            : Math.atan2((start[0] - end[0]) * direction, (start[1] - end[1]) * direction);
+          bag.visible = visit.bought && visit.occupation === 'bakery';
+          bouquet.visible = visit.bought && visit.occupation === 'florist';
+          animateGait(figure, reduceMotion || visit.phase === 'waiting' ? 0 : Math.sin(now / 185) * 0.24);
+          continue;
+        }
+        const [start, end] = trail;
         if (id === talking) {
           group.rotation.y = Math.atan2(group.position.x - viewer.x, group.position.z - viewer.z);
-          for (const limb of [...arms, ...feet]) limb.rotation.x = 0;
+          animateGait(figure, 0);
           continue;
         }
         const time = (now + offset) % walkingPeriod;
@@ -59,15 +99,12 @@ export function buildCharacters({ scene, box, oval, colors: C }) {
         group.position.set(start[0] + dx * step, 0, start[1] + dz * step);
         group.rotation.y = Math.atan2(-dx * direction, -dz * direction);
         const gait = reduceMotion ? 0 : Math.sin(time / 250) * Math.sin(Math.PI * step) * 0.18;
-        for (let i = 0; i < 2; i++) {
-          arms[i].rotation.x = gait * (i ? 1 : -1);
-          feet[i].rotation.x = gait * (i ? -1 : 1);
-        }
+        animateGait(figure, gait);
       }
     },
     talk(id) { talking = id; },
     nearby(position, zone) {
-      return figures.map(({ id, group, place }) => {
+      return figures.filter(({ place }) => place).map(({ id, group, place }) => {
         const { x, z } = group.position;
         const inArea = place === 'outdoors'
           ? !['home', 'bus', 'bakery', 'florist'].includes(zone) : zone === place;

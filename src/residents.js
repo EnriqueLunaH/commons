@@ -10,6 +10,10 @@ export const residents = {
 };
 
 export const residentIds = Object.keys(residents);
+export const customers = {
+  eva: { name: 'Eva', skin: 0xbb876b, hair: 0x4b362f, coat: 0xa17f51, pants: 0x606762 },
+  tomas: { name: 'Tomás', skin: 0x9e6e53, hair: 0x322b27, coat: 0x848f77, pants: 0x796158 },
+};
 
 export function rememberedShift(employment) {
   if (!['returning', 'finished'].includes(employment.stage)) return null;

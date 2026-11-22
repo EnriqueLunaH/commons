@@ -1,4 +1,4 @@
-import { createEmployment, occupations, restoreEmployment } from './employment.js';
+import { createEmployment, occupations, payInterval, restoreEmployment } from './employment.js';
 
 export const regions = {
   'es-MX': { currency: 'MXN', scale: 16, fare: 12 },
@@ -33,7 +33,7 @@ export function createLife(locale, random = Math.random) {
   return {
     version: 1, locale, age, gender, household, moment, yearsTrying, career,
     ...resources,
-    employment: createEmployment(occupation, resources.income),
+    employment: createEmployment(occupation),
     month: 1,
     contributed: 0,
     transitSpent: 0,
@@ -104,6 +104,18 @@ export function payBusFare(life) {
   return { ...life, cash: life.cash - fare, transitSpent: life.transitSpent + fare };
 }
 
+export function settlePayroll(life, day) {
+  const { nextPayday, pendingPay } = life.employment;
+  if (day < nextPayday) return life;
+  const payday = day - (day - 1) % payInterval;
+  return {
+    ...life,
+    cash: life.cash + pendingPay,
+    employment: { ...life.employment, pendingPay: 0, nextPayday: payday + payInterval },
+    lastPayroll: pendingPay ? { day: payday, amount: pendingPay } : life.lastPayroll ?? null,
+  };
+}
+
 export function monthlyStatement(life) {
   const income = life.employment.earned;
   const workPay = life.activity?.kind === 'work' ? life.activity.pay : 0;
@@ -121,8 +133,8 @@ export function monthlyStatement(life) {
   const transitSpent = life.transitSpent;
   const pendingIncome = income + workPay + sales;
   const expenses = essentials + incident + tax + interest + cost + transitSpent;
-  // Supplies and fares already reduced cash, and interest accrues to debt.
-  const afterBills = life.cash + pendingIncome - essentials - incident - tax;
+  // The paycheck uses its own schedule. Supplies and fares already reduced cash.
+  const afterBills = life.cash + workPay + sales - essentials - incident - tax;
 
   return {
     month: life.month, income, workPay, sales, cost, sold: sale?.sold ?? 0, prepared: sale?.units ?? 0,
@@ -165,7 +177,10 @@ export function restoreLife(raw) {
       return {
         ...life,
         transitSpent: Number.isSafeInteger(life.transitSpent) && life.transitSpent >= 0 ? life.transitSpent : 0,
-        employment: restoreEmployment(life.employment, occupations[index], life.income),
+        employment: restoreEmployment(
+          life.employment, occupations[index], life.income,
+          Number.isSafeInteger(life.clock?.day) && life.clock.day >= 1 ? life.clock.day : 1,
+        ),
       };
     }
   } catch {

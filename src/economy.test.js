@@ -19,9 +19,9 @@ test('a life starts at an inclusive age from 20 to 70 with a consistent history'
 });
 
 test('supplies are paid once and a negative margin on a batch is not taxed', () => {
-  const initial = newLife();
+  const initial = { ...newLife(), cash: 924 };
   const sale = scheduleSale(initial, 6, 18);
-  assert.equal(sale.cash, 57);
+  assert.equal(sale.cash, 876);
   assert.equal(scheduleWork(sale), sale);
   assert.equal(scheduleSale(sale, 3, 10), sale);
   const settled = closeMonth(sale);
@@ -47,7 +47,7 @@ test('transfers preserve liquid funds and paying debt reduces the next interest 
 });
 
 test('a repair can create a shortfall, which is covered by debt with cash at zero', () => {
-  const life = { ...newLife(), cash: 0, month: 2 };
+  const life = { ...newLife(), cash: 819, month: 2 };
   const settled = closeMonth(life);
   assert.equal(settled.lastReceipt.incident, 145);
   assert.equal(settled.lastReceipt.shortfall, 141);
@@ -69,7 +69,7 @@ test('the rent and split utility bills add up to the essentials and monthly expe
 });
 
 test('each paid ride reduces cash and monthly margin once, and survives a reload', () => {
-  const initial = createLife('es-MX', () => 0);
+  const initial = { ...createLife('es-MX', () => 0), cash: 20_000 };
   const baseline = monthlyStatement(initial);
   const rode = payBusFare(payBusFare(initial));
   assert.equal(rode.cash, initial.cash - 24);
